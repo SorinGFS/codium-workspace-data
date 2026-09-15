@@ -10,6 +10,11 @@ on:
         description: Existing GitHub release tag to publish
         required: true
         type: string
+      create_namespace:
+        description: Create the package publisher namespace before publishing
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -38,6 +43,13 @@ jobs:
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir artifact
           test -f "artifact/$asset" && test ! -L "artifact/$asset"
           printf 'VSIX_PATH=%s\n' "artifact/$asset" >> "$GITHUB_ENV"
+
+      # Bootstrap the declared publisher namespace only when an authorized manual run requests it.
+      - name: Create Open VSX namespace
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.create_namespace }}
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx --yes ovsx@1.2.0 create-namespace SorinGFS
 
       # Use the pinned official CLI only after the release artifact passes the file check.
       - name: Publish to Open VSX
