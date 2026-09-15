@@ -43,8 +43,10 @@ class WorkspaceDataRepository {
     folder;
     output;
     sourceControl;
+    onDidChangeFileDecorations;
     publicGroup;
     privateGroup;
+    decorationEmitter = new vscode.EventEmitter();
     disposables = [];
     cli;
     report;
@@ -56,6 +58,7 @@ class WorkspaceDataRepository {
         this.folder = folder;
         this.output = output;
         this.cli = new cli_1.WorkspaceDataCli(folder, output);
+        this.onDidChangeFileDecorations = this.decorationEmitter.event;
         this.sourceControl = vscode.scm.createSourceControl('workspaceData', 'Workspace Data', folder.uri);
         this.sourceControl.inputBox.visible = false;
         this.sourceControl.quickDiffProvider = this;
@@ -63,7 +66,7 @@ class WorkspaceDataRepository {
         this.privateGroup = this.sourceControl.createResourceGroup('private', 'Private Changes');
         this.publicGroup.hideWhenEmpty = true;
         this.privateGroup.hideWhenEmpty = true;
-        this.disposables.push(this.publicGroup, this.privateGroup, this.sourceControl, baselineProvider.register(folder.uri.toString(), this));
+        this.disposables.push(this.publicGroup, this.privateGroup, this.sourceControl, this.decorationEmitter, vscode.window.registerFileDecorationProvider(this), baselineProvider.register(folder.uri.toString(), this));
         // Debounce all generated-namespace events into local protocol refreshes.
         const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, '#/**'));
         const schedule = () => this.scheduleRefresh();
@@ -76,6 +79,7 @@ class WorkspaceDataRepository {
         if (this.disposed || sequence !== this.refreshSequence) {
             return report;
         }
+        const previousDecorations = this.decoratedUris(this.report);
         this.report = report;
         const resources = report.state === 'ready'
             ? report.changes.map((change) => this.createResource(change))
@@ -83,7 +87,26 @@ class WorkspaceDataRepository {
         this.publicGroup.resourceStates = resources.filter((resource) => resource.change.visibility === 'public');
         this.privateGroup.resourceStates = resources.filter((resource) => resource.change.visibility === 'private');
         this.sourceControl.count = resources.length;
+        // Invalidate both removed and current Explorer decorations after replacing status.
+        const affectedDecorations = new Map(previousDecorations.map((uri) => [uri.toString(), uri]));
+        for (const uri of this.decoratedUris(report)) {
+            affectedDecorations.set(uri.toString(), uri);
+        }
+        if (affectedDecorations.size > 0) {
+            this.decorationEmitter.fire([...affectedDecorations.values()]);
+        }
         return report;
+    }
+    // Decorate existing modified and added data files with familiar Explorer status badges.
+    provideFileDecoration(uri) {
+        const change = this.changeForUri(uri);
+        if (change?.status === 'modified') {
+            return new vscode.FileDecoration('M', 'Modified workspace data', new vscode.ThemeColor('gitDecoration.modifiedResourceForeground'));
+        }
+        if (change?.status === 'added') {
+            return new vscode.FileDecoration('U', 'Untracked workspace data', new vscode.ThemeColor('gitDecoration.untrackedResourceForeground'));
+        }
+        return undefined;
     }
     // Resolve quick diff only for files known to have a loaded baseline in the current report.
     provideOriginalResource(uri) {
@@ -145,6 +168,12 @@ class WorkspaceDataRepository {
             revision,
             kind: 'baseline'
         });
+    }
+    // Collect only existing-file statuses that can be rendered at Explorer resource URIs.
+    decoratedUris(report) {
+        return report?.changes
+            .filter((change) => change.status === 'modified' || change.status === 'added')
+            .map((change) => vscode.Uri.joinPath(this.folder.uri, ...change.workspacePath.split('/'))) || [];
     }
     // Convert a local workspace URI back into a protocol change identity without path-prefix ambiguity.
     changeForUri(uri) {

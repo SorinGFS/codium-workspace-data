@@ -2,7 +2,7 @@
   "name": "codium-workspace-data",
   "displayName": "Workspace Data",
   "description": "Review gh-workspace-data changes against their exact loaded GitHub baselines.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "SorinGFS",
   "license": "MIT",
   "repository": {
@@ -40,7 +40,7 @@
   "scripts": {
     "compile": "node node_modules/typescript/bin/tsc -p .",
     "check": "node node_modules/typescript/bin/tsc -p . --noEmit",
-    "test": "npm run compile && node --test test/model.test.js",
+    "test": "npm run compile && node --test test/model.test.js test/decoration.test.js test/package.test.js",
     "package": "node node_modules/@vscode/vsce/vsce package"
   },
   "devDependencies": {
@@ -68,7 +68,8 @@
       },
       {
         "command": "workspaceData.publishAndMergeOwned",
-        "title": "Workspace Data: Publish and Merge Owned"
+        "title": "Workspace Data: Publish and Merge Owned",
+        "icon": "$(git-merge)"
       }
     ],
     "menus": {
@@ -87,6 +88,11 @@
           "command": "workspaceData.publish",
           "when": "scmProvider == workspaceData",
           "group": "navigation@3"
+        },
+        {
+          "command": "workspaceData.publishAndMergeOwned",
+          "when": "scmProvider == workspaceData",
+          "group": "navigation@4"
         }
       ]
     }

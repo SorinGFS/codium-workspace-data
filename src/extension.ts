@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { BaselineFileSystemProvider } from './baselineFileSystemProvider';
-import { InspectionState } from './model';
+import { InspectionState, loadNeedsConfirmation, loadOverwritePrompt, StatusReport } from './model';
 import { OperationManager } from './operationManager';
 import { WorkspaceDataRepository } from './repository';
 import { baselineScheme, WorkspaceDataResourceState } from './resource';
@@ -72,7 +72,10 @@ class WorkspaceDataController implements vscode.Disposable {
             }),
             vscode.commands.registerCommand('workspaceData.load', async () => {
                 const folder = await this.pickFolder(false);
-                if (folder && await this.operations.run(folder, `Loading Workspace Data for ${folder.name}`, ['load'])) {
+                if (!folder || !await this.confirmLoadOverwrite(folder)) {
+                    return;
+                }
+                if (await this.operations.run(folder, `Loading Workspace Data for ${folder.name}`, ['load'])) {
                     this.discover();
                     const repository = this.repositories.get(folder.uri.toString());
                     if (repository) {
@@ -83,6 +86,42 @@ class WorkspaceDataController implements vscode.Disposable {
             vscode.commands.registerCommand('workspaceData.publish', () => this.runPublication(false)),
             vscode.commands.registerCommand('workspaceData.publishAndMergeOwned', () => this.runPublication(true))
         );
+    }
+
+    // Confirm destructive loading only when current status or dirty editors contain unpublished work.
+    private async confirmLoadOverwrite(folder: vscode.WorkspaceFolder): Promise<boolean> {
+        const repository = this.repositories.get(folder.uri.toString());
+        let report: StatusReport | undefined;
+        if (repository) {
+            try {
+                report = await repository.refresh();
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                this.output.appendLine(`Workspace Data pre-load refresh failed for ${folder.name}: ${message}`);
+                void vscode.window.showErrorMessage(`Workspace Data: ${message}`);
+                return false;
+            }
+        }
+        if (!loadNeedsConfirmation(report, this.hasDirtyWorkspaceDataDocument(folder))) {
+            return true;
+        }
+        const selection = await vscode.window.showWarningMessage(
+            loadOverwritePrompt,
+            { modal: true },
+            'Overwrite'
+        );
+        return selection === 'Overwrite';
+    }
+
+    // Detect unsaved workspace-data editors that the local status protocol cannot observe yet.
+    private hasDirtyWorkspaceDataDocument(folder: vscode.WorkspaceFolder): boolean {
+        return vscode.workspace.textDocuments.some((document) => {
+            if (!document.isDirty || document.uri.scheme !== 'file') {
+                return false;
+            }
+            const relative = path.relative(folder.uri.fsPath, document.uri.fsPath).split(path.sep).join('/');
+            return relative.startsWith('#/public/') || relative.startsWith('#/private/');
+        });
     }
 
     // Publish through the selected repository and refresh only after a successful CLI operation.

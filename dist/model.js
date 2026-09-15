@@ -1,7 +1,10 @@
 "use strict";
 // Define and validate the complete editor-facing contract for workspace-data inspection protocol version 1.
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.loadOverwritePrompt = void 0;
+exports.loadNeedsConfirmation = loadNeedsConfirmation;
 exports.parseStatusReport = parseStatusReport;
+exports.loadOverwritePrompt = 'You have unpublished changes, are you sure you want to overwrite the existing workspace data?';
 // Narrow unknown JSON values before any protocol fields are consumed.
 function isRecord(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -53,6 +56,10 @@ function parseChange(value) {
         workspacePath: value.workspacePath,
         baseline: available ? { available: true, size: size } : { available: false }
     };
+}
+// Require load confirmation for detected baseline changes or dirty workspace-data editors.
+function loadNeedsConfirmation(report, hasDirtyDocument) {
+    return hasDirtyDocument || (report?.state === 'ready' && report.changes.length > 0);
 }
 // Parse exactly one supported status response and reject structurally unsafe or contradictory data.
 function parseStatusReport(raw) {

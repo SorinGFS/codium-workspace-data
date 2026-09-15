@@ -3,7 +3,11 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { parseStatusReport } = require('../dist/model.js');
+const {
+    loadNeedsConfirmation,
+    loadOverwritePrompt,
+    parseStatusReport
+} = require('../dist/model.js');
 
 // Accept a complete protocol-version-one report.
 test('parses a ready status report', () => {
@@ -27,6 +31,15 @@ test('parses a ready status report', () => {
 
     assert.equal(report.state, 'ready');
     assert.equal(report.changes[0].path, 'tests/a.txt');
+});
+
+// Confirm destructive loading for saved status changes or unsaved editor changes only.
+test('classifies load confirmation requirements', () => {
+    assert.equal(loadNeedsConfirmation({ state: 'ready', changes: [{}] }, false), true);
+    assert.equal(loadNeedsConfirmation({ state: 'ready', changes: [] }, true), true);
+    assert.equal(loadNeedsConfirmation({ state: 'ready', changes: [] }, false), false);
+    assert.equal(loadOverwritePrompt,
+        'You have unpublished changes, are you sure you want to overwrite the existing workspace data?');
 });
 
 // Reject protocol versions the extension does not implement.

@@ -7,10 +7,13 @@ import { WorkspaceDataCli } from './cli';
 import { StatusReport, Visibility, WorkspaceDataChange } from './model';
 import { createBaselineUri, WorkspaceDataResourceState } from './resource';
 
-export class WorkspaceDataRepository implements vscode.Disposable, vscode.QuickDiffProvider, BaselineReader {
+export class WorkspaceDataRepository implements vscode.Disposable, vscode.QuickDiffProvider,
+    vscode.FileDecorationProvider, BaselineReader {
     public readonly sourceControl: vscode.SourceControl;
+    public readonly onDidChangeFileDecorations: vscode.Event<vscode.Uri | vscode.Uri[] | undefined>;
     private readonly publicGroup: vscode.SourceControlResourceGroup;
     private readonly privateGroup: vscode.SourceControlResourceGroup;
+    private readonly decorationEmitter = new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
     private readonly disposables: vscode.Disposable[] = [];
     private readonly cli: WorkspaceDataCli;
     private report: StatusReport | undefined;
@@ -25,6 +28,7 @@ export class WorkspaceDataRepository implements vscode.Disposable, vscode.QuickD
         private readonly output: vscode.OutputChannel
     ) {
         this.cli = new WorkspaceDataCli(folder, output);
+        this.onDidChangeFileDecorations = this.decorationEmitter.event;
         this.sourceControl = vscode.scm.createSourceControl('workspaceData', 'Workspace Data', folder.uri);
         this.sourceControl.inputBox.visible = false;
         this.sourceControl.quickDiffProvider = this;
@@ -36,6 +40,8 @@ export class WorkspaceDataRepository implements vscode.Disposable, vscode.QuickD
             this.publicGroup,
             this.privateGroup,
             this.sourceControl,
+            this.decorationEmitter,
+            vscode.window.registerFileDecorationProvider(this),
             baselineProvider.register(folder.uri.toString(), this)
         );
 
@@ -57,6 +63,7 @@ export class WorkspaceDataRepository implements vscode.Disposable, vscode.QuickD
         if (this.disposed || sequence !== this.refreshSequence) {
             return report;
         }
+        const previousDecorations = this.decoratedUris(this.report);
         this.report = report;
         const resources = report.state === 'ready'
             ? report.changes.map((change) => this.createResource(change))
@@ -64,7 +71,36 @@ export class WorkspaceDataRepository implements vscode.Disposable, vscode.QuickD
         this.publicGroup.resourceStates = resources.filter((resource) => resource.change.visibility === 'public');
         this.privateGroup.resourceStates = resources.filter((resource) => resource.change.visibility === 'private');
         this.sourceControl.count = resources.length;
+
+        // Invalidate both removed and current Explorer decorations after replacing status.
+        const affectedDecorations = new Map(previousDecorations.map((uri) => [uri.toString(), uri]));
+        for (const uri of this.decoratedUris(report)) {
+            affectedDecorations.set(uri.toString(), uri);
+        }
+        if (affectedDecorations.size > 0) {
+            this.decorationEmitter.fire([...affectedDecorations.values()]);
+        }
         return report;
+    }
+
+    // Decorate existing modified and added data files with familiar Explorer status badges.
+    public provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
+        const change = this.changeForUri(uri);
+        if (change?.status === 'modified') {
+            return new vscode.FileDecoration(
+                'M',
+                'Modified workspace data',
+                new vscode.ThemeColor('gitDecoration.modifiedResourceForeground')
+            );
+        }
+        if (change?.status === 'added') {
+            return new vscode.FileDecoration(
+                'U',
+                'Untracked workspace data',
+                new vscode.ThemeColor('gitDecoration.untrackedResourceForeground')
+            );
+        }
+        return undefined;
     }
 
     // Resolve quick diff only for files known to have a loaded baseline in the current report.
@@ -132,6 +168,13 @@ export class WorkspaceDataRepository implements vscode.Disposable, vscode.QuickD
             revision,
             kind: 'baseline'
         });
+    }
+
+    // Collect only existing-file statuses that can be rendered at Explorer resource URIs.
+    private decoratedUris(report: StatusReport | undefined): vscode.Uri[] {
+        return report?.changes
+            .filter((change) => change.status === 'modified' || change.status === 'added')
+            .map((change) => vscode.Uri.joinPath(this.folder.uri, ...change.workspacePath.split('/'))) || [];
     }
 
     // Convert a local workspace URI back into a protocol change identity without path-prefix ambiguity.

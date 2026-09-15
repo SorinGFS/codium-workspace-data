@@ -3,6 +3,7 @@
 export type Visibility = 'public' | 'private';
 export type ChangeStatus = 'added' | 'modified' | 'deleted';
 export type InspectionState = 'ready' | 'notInitialized' | 'reloadRequired';
+export const loadOverwritePrompt = 'You have unpublished changes, are you sure you want to overwrite the existing workspace data?';
 
 export interface RepositoryStatus {
     availability: 'available' | 'missing';
@@ -81,6 +82,11 @@ function parseChange(value: unknown): WorkspaceDataChange {
         workspacePath: value.workspacePath as string,
         baseline: available ? { available: true, size: size as number } : { available: false }
     };
+}
+
+// Require load confirmation for detected baseline changes or dirty workspace-data editors.
+export function loadNeedsConfirmation(report: StatusReport | undefined, hasDirtyDocument: boolean): boolean {
+    return hasDirtyDocument || (report?.state === 'ready' && report.changes.length > 0);
 }
 
 // Parse exactly one supported status response and reject structurally unsafe or contradictory data.
