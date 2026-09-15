@@ -9,7 +9,7 @@ The extension creates one **Workspace Data** Source Control provider for each wo
 - VSCodium or VS Code 1.85 or newer
 - GitHub CLI with the `SorinGFS/gh-workspace-data` extension installed
 - A local file workspace hosted in a Git repository
-- Synchronization state version 2 and `gh workspace-data capabilities --json` reporting inspection protocol 1 and replacement-style loading
+- `gh workspace-data capabilities --json` reporting inspection protocol 1 and replacement-style loading
 
 No second Git repository is created under `#/`, and the editor does not determine repository mappings or query the latest remote revision. Mapping, authentication, baselines, loading, and publication remain owned by `gh-workspace-data`.
 
@@ -18,7 +18,7 @@ No second Git repository is created under `#/`, and the editor does not determin
 <details>
 <summary><strong>Install, reveal the provider, inspect changes, and synchronize data</strong></summary>
 
-This extension assumes the target project is managed by `gh-workspace-data` and contains synchronization state version 2 at `#/.data-state.json`. See the [`gh-workspace-data` documentation](https://github.com/SorinGFS/gh-workspace-data#readme) for initialization, repository selection, loading, and publication behavior.
+This extension assumes the target project is managed by `gh-workspace-data`. See the [`gh-workspace-data` documentation](https://github.com/SorinGFS/gh-workspace-data#readme) for initialization, repository selection, loading, and publication behavior.
 
 If GitHub CLI is unavailable, the extension offers to open its setup page. If `gh-workspace-data` is missing or does not report the required capabilities, the extension offers **Install or Upgrade** and **View Documentation**. Compatibility is determined from the reported inspection protocol and Load behavior rather than from the package version label. It runs `gh extension install SorinGFS/gh-workspace-data --force` only after the user explicitly selects **Install or Upgrade**; it never installs user-wide software silently.
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- Remove synchronization state version 2 from the documented editor prerequisites.
+
 ## 0.1.2
 
 - Reload an unchanged active workspace-data editor after Load while preserving edits made during the operation.
