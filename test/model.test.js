@@ -6,8 +6,34 @@ const test = require('node:test');
 const {
     loadNeedsConfirmation,
     loadOverwritePrompt,
+    parseCapabilities,
     parseStatusReport
 } = require('../dist/model.js');
+
+// Determine compatibility from reported behavior rather than the package version label.
+test('parses compatible CLI capabilities', () => {
+    assert.deepEqual(parseCapabilities(JSON.stringify({
+        command: 'gh workspace-data',
+        version: '0.1.0-compatible',
+        inspectionProtocolVersions: [1],
+        loadBehavior: 'replace'
+    })), {
+        command: 'gh workspace-data',
+        version: '0.1.0-compatible',
+        inspectionProtocolVersions: [1],
+        loadBehavior: 'replace'
+    });
+});
+
+// Reject an installation that cannot satisfy the extension's baseline protocol.
+test('rejects incompatible CLI capabilities', () => {
+    assert.throws(() => parseCapabilities(JSON.stringify({
+        command: 'gh workspace-data',
+        version: '0.7.1',
+        inspectionProtocolVersions: [1],
+        loadBehavior: 'reconcile'
+    })), /required capabilities/);
+});
 
 // Accept a complete protocol-version-one report.
 test('parses a ready status report', () => {

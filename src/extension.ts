@@ -4,15 +4,24 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { BaselineFileSystemProvider } from './baselineFileSystemProvider';
+import { GitHubCliUnavailableError, WorkspaceDataCli } from './cli';
 import { InspectionState, loadNeedsConfirmation, loadOverwritePrompt, StatusReport } from './model';
 import { OperationManager } from './operationManager';
 import { WorkspaceDataRepository } from './repository';
 import { baselineScheme, WorkspaceDataResourceState } from './resource';
 
+// Retain the exact editor model generation that the user authorized Load to replace.
+interface ActiveDataEditorSnapshot {
+    document: vscode.TextDocument;
+    version: number;
+}
+
 class WorkspaceDataController implements vscode.Disposable {
     private readonly repositories = new Map<string, WorkspaceDataRepository>();
     private readonly disposables: vscode.Disposable[] = [];
     private readonly operations: OperationManager;
+    private prerequisitesReady = false;
+    private prerequisiteCheck: Promise<boolean> | undefined;
 
     // Initialize workspace discovery and command routing for one extension-host activation.
     public constructor(
@@ -72,10 +81,13 @@ class WorkspaceDataController implements vscode.Disposable {
             }),
             vscode.commands.registerCommand('workspaceData.load', async () => {
                 const folder = await this.pickFolder(false);
-                if (!folder || !await this.confirmLoadOverwrite(folder)) {
+                if (!folder || !await this.ensurePrerequisites(folder)
+                    || !await this.ensureAuthentication(folder) || !await this.confirmLoadOverwrite(folder)) {
                     return;
                 }
+                const activeDataEditor = this.activeWorkspaceDataEditor(folder);
                 if (await this.operations.run(folder, `Loading Workspace Data for ${folder.name}`, ['load'])) {
+                    await this.reloadActiveWorkspaceDataEditor(activeDataEditor);
                     this.discover();
                     const repository = this.repositories.get(folder.uri.toString());
                     if (repository) {
@@ -86,6 +98,96 @@ class WorkspaceDataController implements vscode.Disposable {
             vscode.commands.registerCommand('workspaceData.publish', () => this.runPublication(false)),
             vscode.commands.registerCommand('workspaceData.publishAndMergeOwned', () => this.runPublication(true))
         );
+    }
+
+    // Cache one successful user-wide prerequisite check while sharing concurrent activation checks.
+    private async ensurePrerequisites(folder: vscode.WorkspaceFolder): Promise<boolean> {
+        if (this.prerequisitesReady) {
+            return true;
+        }
+        if (!this.prerequisiteCheck) {
+            this.prerequisiteCheck = this.checkPrerequisites(folder);
+        }
+        try {
+            const ready = await this.prerequisiteCheck;
+            this.prerequisitesReady = ready;
+            return ready;
+        } finally {
+            this.prerequisiteCheck = undefined;
+        }
+    }
+
+    // Guide installation explicitly and execute it only after the user selects the install action.
+    private async checkPrerequisites(folder: vscode.WorkspaceFolder): Promise<boolean> {
+        const cli = new WorkspaceDataCli(folder, this.output);
+        try {
+            await cli.capabilities();
+            return true;
+        } catch (error) {
+            if (error instanceof GitHubCliUnavailableError) {
+                const selection = await vscode.window.showErrorMessage(
+                    'Workspace Data requires GitHub CLI, but gh is not available on PATH.',
+                    'Open GitHub CLI Setup'
+                );
+                if (selection === 'Open GitHub CLI Setup') {
+                    await vscode.env.openExternal(vscode.Uri.parse('https://cli.github.com/'));
+                }
+                return false;
+            }
+
+            const detail = error instanceof Error ? error.message : String(error);
+            this.output.appendLine(`Workspace Data prerequisite check failed: ${detail}`);
+            const selection = await vscode.window.showWarningMessage(
+                'Workspace Data requires SorinGFS/gh-workspace-data with compatible inspection and Load capabilities.',
+                'Install or Upgrade',
+                'View Documentation'
+            );
+            if (selection === 'View Documentation') {
+                await vscode.env.openExternal(vscode.Uri.parse(
+                    'https://github.com/SorinGFS/gh-workspace-data#install-and-get-started'
+                ));
+                return false;
+            }
+            if (selection !== 'Install or Upgrade') {
+                return false;
+            }
+
+            try {
+                await vscode.window.withProgress({
+                    location: vscode.ProgressLocation.Notification,
+                    title: 'Installing or upgrading gh-workspace-data',
+                    cancellable: true
+                }, async (_progress, token) => cli.installOrUpgrade(token));
+                await cli.capabilities();
+                void vscode.window.showInformationMessage('The gh-workspace-data prerequisite is ready.');
+                return true;
+            } catch (installError) {
+                const message = installError instanceof Error ? installError.message : String(installError);
+                this.output.appendLine(`Workspace Data prerequisite installation failed: ${message}`);
+                this.output.show(true);
+                void vscode.window.showErrorMessage(`Workspace Data: ${message}`);
+                return false;
+            }
+        }
+    }
+
+    // Guide unauthenticated users to GitHub CLI setup before any remote mutation is attempted.
+    private async ensureAuthentication(folder: vscode.WorkspaceFolder): Promise<boolean> {
+        try {
+            await new WorkspaceDataCli(folder, this.output).verifyAuthentication();
+            return true;
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            this.output.appendLine(`Workspace Data authentication check failed: ${detail}`);
+            const selection = await vscode.window.showWarningMessage(
+                'Workspace Data requires an authenticated GitHub CLI account for github.com.',
+                'Open Authentication Setup'
+            );
+            if (selection === 'Open Authentication Setup') {
+                await vscode.env.openExternal(vscode.Uri.parse('https://cli.github.com/manual/gh_auth_login'));
+            }
+            return false;
+        }
     }
 
     // Confirm destructive loading only when current status or dirty editors contain unpublished work.
@@ -115,19 +217,51 @@ class WorkspaceDataController implements vscode.Disposable {
 
     // Detect unsaved workspace-data editors that the local status protocol cannot observe yet.
     private hasDirtyWorkspaceDataDocument(folder: vscode.WorkspaceFolder): boolean {
-        return vscode.workspace.textDocuments.some((document) => {
-            if (!document.isDirty || document.uri.scheme !== 'file') {
-                return false;
-            }
-            const relative = path.relative(folder.uri.fsPath, document.uri.fsPath).split(path.sep).join('/');
-            return relative.startsWith('#/public/') || relative.startsWith('#/private/');
-        });
+        return vscode.workspace.textDocuments.some((document) => document.isDirty
+            && this.isWorkspaceDataUri(folder, document.uri));
+    }
+
+    // Capture the active model and generation so only edits covered by confirmation can be reverted.
+    private activeWorkspaceDataEditor(folder: vscode.WorkspaceFolder): ActiveDataEditorSnapshot | undefined {
+        const document = vscode.window.activeTextEditor?.document;
+        return document && this.isWorkspaceDataUri(folder, document.uri)
+            ? { document, version: document.version }
+            : undefined;
+    }
+
+    // Reload only the unchanged active model; preserve and report edits made while Load was running.
+    private async reloadActiveWorkspaceDataEditor(expected: ActiveDataEditorSnapshot | undefined): Promise<void> {
+        const activeDocument = vscode.window.activeTextEditor?.document;
+        if (!expected || !activeDocument || activeDocument !== expected.document) {
+            return;
+        }
+        if (activeDocument.version !== expected.version) {
+            void vscode.window.showWarningMessage(
+                'The active Workspace Data editor changed while Load was running, so its contents were preserved. Review it before continuing.'
+            );
+            return;
+        }
+        try {
+            await vscode.commands.executeCommand('workbench.action.files.revert');
+        } catch (error) {
+            this.output.appendLine(`Workspace Data could not reload ${expected.document.uri.fsPath}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    // Identify public or private materialized data beneath one local workspace without prefix ambiguity.
+    private isWorkspaceDataUri(folder: vscode.WorkspaceFolder, uri: vscode.Uri): boolean {
+        if (uri.scheme !== 'file') {
+            return false;
+        }
+        const relative = path.relative(folder.uri.fsPath, uri.fsPath).split(path.sep).join('/');
+        return relative.startsWith('#/public/') || relative.startsWith('#/private/');
     }
 
     // Publish through the selected repository and refresh only after a successful CLI operation.
     private async runPublication(mergeOwned: boolean): Promise<void> {
         const repository = await this.pickRepository();
-        if (!repository) {
+        if (!repository || !await this.ensurePrerequisites(repository.folder)
+            || !await this.ensureAuthentication(repository.folder)) {
             return;
         }
         const args = mergeOwned ? ['publish', '--merge-owned'] : ['publish'];
@@ -141,6 +275,9 @@ class WorkspaceDataController implements vscode.Disposable {
 
     // Refresh one repository and explain protocol states that need a user action.
     private async refreshRepository(repository: WorkspaceDataRepository, notify: boolean): Promise<void> {
+        if (!await this.ensurePrerequisites(repository.folder)) {
+            return;
+        }
         try {
             const report = await repository.refresh();
             if (notify) {

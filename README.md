@@ -9,7 +9,7 @@ The extension creates one **Workspace Data** Source Control provider for each wo
 - VSCodium or VS Code 1.85 or newer
 - GitHub CLI with the `SorinGFS/gh-workspace-data` extension installed
 - A local file workspace hosted in a Git repository
-- Synchronization state version 2 and overwrite-style loading from `gh workspace-data` 0.7.0 or newer
+- Synchronization state version 2 and `gh workspace-data capabilities --json` reporting inspection protocol 1 and replacement-style loading
 
 No second Git repository is created under `#/`, and the editor does not determine repository mappings or query the latest remote revision. Mapping, authentication, baselines, loading, and publication remain owned by `gh-workspace-data`.
 
@@ -18,7 +18,11 @@ No second Git repository is created under `#/`, and the editor does not determin
 <details>
 <summary><strong>Install, reveal the provider, inspect changes, and synchronize data</strong></summary>
 
-This extension assumes the target project is already managed by `gh-workspace-data` and contains synchronization state version 2 at `#/.data-state.json`. See the [`gh-workspace-data` documentation](https://github.com/SorinGFS/gh-workspace-data#readme) for installation, initialization, repository selection, loading, and publication behavior.
+This extension assumes the target project is managed by `gh-workspace-data` and contains synchronization state version 2 at `#/.data-state.json`. See the [`gh-workspace-data` documentation](https://github.com/SorinGFS/gh-workspace-data#readme) for initialization, repository selection, loading, and publication behavior.
+
+If GitHub CLI is unavailable, the extension offers to open its setup page. If `gh-workspace-data` is missing or does not report the required capabilities, the extension offers **Install or Upgrade** and **View Documentation**. Compatibility is determined from the reported inspection protocol and Load behavior rather than from the package version label. It runs `gh extension install SorinGFS/gh-workspace-data --force` only after the user explicitly selects **Install or Upgrade**; it never installs user-wide software silently.
+
+Before Load or either Publish command, the extension checks the active GitHub CLI authentication for `github.com`. If authentication is unavailable, it offers **Open Authentication Setup** instead of starting the operation. Complete authentication in GitHub CLI, then run the command again.
 
 ### 1. Install and activate the editor extension
 
@@ -57,13 +61,13 @@ Use **Workspace Data: Refresh** when an explicit refresh is useful. Refresh is l
 
 > You have unpublished changes, are you sure you want to overwrite the existing workspace data?
 
-Choose **Overwrite** to discard those changes and continue, or cancel to retain them. Running `gh workspace-data load` directly has no editor confirmation; see the [`gh-workspace-data` documentation](https://github.com/SorinGFS/gh-workspace-data#readme) for command behavior.
+Choose **Overwrite** to discard those changes and continue, or cancel to retain them. After a successful Load, the extension immediately reloads the same active workspace-data editor from disk only if its model did not change while Load was running. If the model changed, the extension preserves its in-memory contents and warns you to review them instead of silently reverting the newer edits. Running `gh workspace-data load` directly has no editor confirmation; see the [`gh-workspace-data` documentation](https://github.com/SorinGFS/gh-workspace-data#readme) for command behavior.
 
 ### 5. Publish
 
 Use **Workspace Data: Publish** to create or update pull requests for changed public and private data. Use the adjacent **Workspace Data: Publish and Merge Owned** toolbar button only when actor-owned pull requests should be merged immediately where repository rules permit it. Per-workspace locking prevents overlapping load and publication operations.
 
-If refresh fails, open **View: Toggle Output** and select **Workspace Data** for the CLI diagnostic.
+If a refresh or synchronization operation fails, open **View: Toggle Output** and select **Workspace Data** for the CLI diagnostic.
 
 </details>
 
@@ -78,8 +82,8 @@ Refresh runs the local-only `gh workspace-data status --json` protocol. Baseline
 
 ## Privacy
 
-The extension has no telemetry. It sends no requests itself; authenticated baseline reads and synchronization operations are delegated to the installed GitHub CLI extension.
+The extension has no telemetry and implements no direct network client. It invokes GitHub CLI for authentication checks and delegates authenticated baseline reads and synchronization operations to the installed `gh-workspace-data` extension.
 
 ## Open VSX
 
-The package uses only stable extension APIs and is intended for publication to [Open VSX](https://open-vsx.org/).
+The package is intended for publication to [Open VSX](https://open-vsx.org/).

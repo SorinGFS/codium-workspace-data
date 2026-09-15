@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2
+
+- Reload an unchanged active workspace-data editor after Load while preserving edits made during the operation.
+- Detect missing GitHub CLI and offer its setup documentation.
+- Detect missing or incompatible `gh-workspace-data` capabilities and offer an explicit install-or-upgrade action.
+- Determine compatibility from reported capabilities rather than a package-version threshold.
+- Check active GitHub CLI authentication before Load and publication and offer authentication setup guidance.
+
 ## 0.1.1
 
 - Add theme-aware Explorer `M` and `U` decorations for modified and newly added workspace-data files.

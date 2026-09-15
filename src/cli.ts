@@ -2,9 +2,17 @@
 
 import { spawn } from 'node:child_process';
 import * as vscode from 'vscode';
-import { parseStatusReport, StatusReport, Visibility } from './model';
+import {
+    parseCapabilities,
+    parseStatusReport,
+    StatusReport,
+    Visibility,
+    WorkspaceDataCapabilities
+} from './model';
 
 const maximumOutputBytes = 101 * 1024 * 1024;
+
+export class GitHubCliUnavailableError extends Error {}
 
 export class WorkspaceDataCli {
     // Bind every invocation to one local workspace and one diagnostic channel.
@@ -12,6 +20,26 @@ export class WorkspaceDataCli {
         private readonly folder: vscode.WorkspaceFolder,
         private readonly output: vscode.OutputChannel
     ) {}
+
+    // Verify the installed CLI extension contract without requiring repository or authentication state.
+    public async capabilities(token?: vscode.CancellationToken): Promise<WorkspaceDataCapabilities> {
+        const bytes = await this.execute(['capabilities', '--json'], token, false);
+        return parseCapabilities(bytes.toString('utf8'));
+    }
+
+    // Install or upgrade the required GitHub CLI extension after explicit user selection.
+    public async installOrUpgrade(token?: vscode.CancellationToken): Promise<void> {
+        await this.executeGitHubCli([
+            'extension', 'install', 'SorinGFS/gh-workspace-data', '--force'
+        ], token, true);
+    }
+
+    // Verify the active github.com account before an operation that requires remote access.
+    public async verifyAuthentication(token?: vscode.CancellationToken): Promise<void> {
+        await this.executeGitHubCli([
+            'auth', 'status', '--active', '--hostname', 'github.com'
+        ], token, false);
+    }
 
     // Read local status through protocol version 1 without exposing process details to callers.
     public async status(token?: vscode.CancellationToken): Promise<StatusReport> {
@@ -39,11 +67,20 @@ export class WorkspaceDataCli {
 
     // Capture bounded process output, propagate cancellation, and reject every nonzero exit status.
     private execute(args: readonly string[], token: vscode.CancellationToken | undefined, echo: boolean): Promise<Buffer> {
+        return this.executeGitHubCli(['workspace-data', ...args], token, echo);
+    }
+
+    // Capture bounded GitHub CLI output, propagate cancellation, and reject every nonzero exit status.
+    private executeGitHubCli(
+        args: readonly string[],
+        token: vscode.CancellationToken | undefined,
+        echo: boolean
+    ): Promise<Buffer> {
         if (this.folder.uri.scheme !== 'file') {
             return Promise.reject(new Error('Workspace Data requires a local file workspace.'));
         }
         return new Promise((resolve, reject) => {
-            const child = spawn('gh', ['workspace-data', ...args], {
+            const child = spawn('gh', args, {
                 cwd: this.folder.uri.fsPath,
                 windowsHide: true,
                 shell: false
@@ -63,7 +100,7 @@ export class WorkspaceDataCli {
                     child.kill();
                     if (!settled) {
                         settled = true;
-                        reject(new Error('gh workspace-data produced more than 101 MiB of output.'));
+                        reject(new Error('GitHub CLI produced more than 101 MiB of output.'));
                     }
                     return;
                 }
@@ -77,11 +114,13 @@ export class WorkspaceDataCli {
             child.stderr.on('data', (chunk: Buffer) => collect(stderr, chunk));
 
             // Surface executor startup failures independently of command exit diagnostics.
-            child.on('error', (error) => {
+            child.on('error', (error: NodeJS.ErrnoException) => {
                 cancellation?.dispose();
                 if (!settled) {
                     settled = true;
-                    reject(new Error(`Unable to run gh workspace-data: ${error.message}`));
+                    reject(error.code === 'ENOENT'
+                        ? new GitHubCliUnavailableError('GitHub CLI is not installed or is not available on PATH.')
+                        : new Error(`Unable to run GitHub CLI: ${error.message}`));
                 }
             });
 
@@ -99,7 +138,7 @@ export class WorkspaceDataCli {
                 if (code !== 0) {
                     const detail = Buffer.concat(stderr).toString('utf8').trim()
                         || Buffer.concat(stdout).toString('utf8').trim();
-                    reject(new Error(detail || `gh workspace-data exited with status ${String(code)}.`));
+                    reject(new Error(detail || `GitHub CLI exited with status ${String(code)}.`));
                     return;
                 }
                 resolve(Buffer.concat(stdout));

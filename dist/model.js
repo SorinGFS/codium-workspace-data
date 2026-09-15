@@ -3,6 +3,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.loadOverwritePrompt = void 0;
 exports.loadNeedsConfirmation = loadNeedsConfirmation;
+exports.parseCapabilities = parseCapabilities;
 exports.parseStatusReport = parseStatusReport;
 exports.loadOverwritePrompt = 'You have unpublished changes, are you sure you want to overwrite the existing workspace data?';
 // Narrow unknown JSON values before any protocol fields are consumed.
@@ -60,6 +61,29 @@ function parseChange(value) {
 // Require load confirmation for detected baseline changes or dirty workspace-data editors.
 function loadNeedsConfirmation(report, hasDirtyDocument) {
     return hasDirtyDocument || (report?.state === 'ready' && report.changes.length > 0);
+}
+// Parse the prerequisite contract and require every behavior consumed by this extension.
+function parseCapabilities(raw) {
+    let value;
+    try {
+        value = JSON.parse(raw);
+    }
+    catch {
+        throw new Error('gh workspace-data returned invalid capability JSON.');
+    }
+    if (!isRecord(value) || value.command !== 'gh workspace-data'
+        || typeof value.version !== 'string' || value.version.length === 0
+        || !Array.isArray(value.inspectionProtocolVersions)
+        || !value.inspectionProtocolVersions.every((version) => Number.isSafeInteger(version))
+        || !value.inspectionProtocolVersions.includes(1) || value.loadBehavior !== 'replace') {
+        throw new Error('The installed gh-workspace-data extension does not report the required capabilities.');
+    }
+    return {
+        command: 'gh workspace-data',
+        version: value.version,
+        inspectionProtocolVersions: value.inspectionProtocolVersions,
+        loadBehavior: 'replace'
+    };
 }
 // Parse exactly one supported status response and reject structurally unsafe or contradictory data.
 function parseStatusReport(raw) {

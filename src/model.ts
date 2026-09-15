@@ -5,6 +5,13 @@ export type ChangeStatus = 'added' | 'modified' | 'deleted';
 export type InspectionState = 'ready' | 'notInitialized' | 'reloadRequired';
 export const loadOverwritePrompt = 'You have unpublished changes, are you sure you want to overwrite the existing workspace data?';
 
+export interface WorkspaceDataCapabilities {
+    command: 'gh workspace-data';
+    version: string;
+    inspectionProtocolVersions: number[];
+    loadBehavior: 'replace';
+}
+
 export interface RepositoryStatus {
     availability: 'available' | 'missing';
     baselineRevision: string | null;
@@ -87,6 +94,29 @@ function parseChange(value: unknown): WorkspaceDataChange {
 // Require load confirmation for detected baseline changes or dirty workspace-data editors.
 export function loadNeedsConfirmation(report: StatusReport | undefined, hasDirtyDocument: boolean): boolean {
     return hasDirtyDocument || (report?.state === 'ready' && report.changes.length > 0);
+}
+
+// Parse the prerequisite contract and require every behavior consumed by this extension.
+export function parseCapabilities(raw: string): WorkspaceDataCapabilities {
+    let value: unknown;
+    try {
+        value = JSON.parse(raw);
+    } catch {
+        throw new Error('gh workspace-data returned invalid capability JSON.');
+    }
+    if (!isRecord(value) || value.command !== 'gh workspace-data'
+        || typeof value.version !== 'string' || value.version.length === 0
+        || !Array.isArray(value.inspectionProtocolVersions)
+        || !value.inspectionProtocolVersions.every((version) => Number.isSafeInteger(version))
+        || !value.inspectionProtocolVersions.includes(1) || value.loadBehavior !== 'replace') {
+        throw new Error('The installed gh-workspace-data extension does not report the required capabilities.');
+    }
+    return {
+        command: 'gh workspace-data',
+        version: value.version,
+        inspectionProtocolVersions: value.inspectionProtocolVersions as number[],
+        loadBehavior: 'replace'
+    };
 }
 
 // Parse exactly one supported status response and reject structurally unsafe or contradictory data.
