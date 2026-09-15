@@ -1,0 +1,94 @@
+{
+  "name": "codium-workspace-data",
+  "displayName": "Workspace Data",
+  "description": "Review gh-workspace-data changes against their exact loaded GitHub baselines.",
+  "version": "0.1.0",
+  "publisher": "SorinGFS",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SorinGFS/codium-workspace-data.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "SCM Providers",
+    "Other"
+  ],
+  "keywords": [
+    "github",
+    "workspace-data",
+    "scm",
+    "diff",
+    "vscodium"
+  ],
+  "activationEvents": [
+    "workspaceContains:#/.data-state.json",
+    "onCommand:workspaceData.load",
+    "onCommand:workspaceData.refresh",
+    "onCommand:workspaceData.publish",
+    "onCommand:workspaceData.publishAndMergeOwned"
+  ],
+  "main": "./dist/extension.js",
+  "files": [
+    "dist/**",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "compile": "node node_modules/typescript/bin/tsc -p .",
+    "check": "node node_modules/typescript/bin/tsc -p . --noEmit",
+    "test": "npm run compile && node --test test/model.test.js",
+    "package": "node node_modules/@vscode/vsce/vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.9.2",
+    "typescript": "^5.7.0"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "workspaceData.load",
+        "title": "Workspace Data: Load",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "workspaceData.refresh",
+        "title": "Workspace Data: Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "workspaceData.publish",
+        "title": "Workspace Data: Publish",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "workspaceData.publishAndMergeOwned",
+        "title": "Workspace Data: Publish and Merge Owned"
+      }
+    ],
+    "menus": {
+      "scm/title": [
+        {
+          "command": "workspaceData.refresh",
+          "when": "scmProvider == workspaceData",
+          "group": "navigation@1"
+        },
+        {
+          "command": "workspaceData.load",
+          "when": "scmProvider == workspaceData",
+          "group": "navigation@2"
+        },
+        {
+          "command": "workspaceData.publish",
+          "when": "scmProvider == workspaceData",
+          "group": "navigation@3"
+        }
+      ]
+    }
+  }
+}
