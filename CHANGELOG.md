@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4
+
+- Make installation through VSCodium's Open VSX interface the primary documented setup path.
+- Document the stock VS Code VSIX fallback, automatic updates, and the published Open VSX listing.
+
 ## 0.1.3
 
 - Remove synchronization state version 2 from the documented editor prerequisites.

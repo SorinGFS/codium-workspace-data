@@ -26,13 +26,22 @@ Before Load or either Publish command, the extension checks the active GitHub CL
 
 ### 1. Install and activate the editor extension
 
-Download the VSIX from the [latest GitHub release](https://github.com/SorinGFS/codium-workspace-data/releases/latest), then use **Extensions: Install from VSIX...** or:
+In VSCodium, install directly from Open VSX through the editor interface:
+
+1. Open **Extensions** with `Ctrl+Shift+X`.
+2. Search for `SorinGFS.codium-workspace-data`.
+3. Select **Workspace Data** by **SorinGFS** and choose **Install**.
+
+An Open VSX installation receives later releases according to the editor's extension auto-update settings.
+
+Stock VS Code does not use Open VSX. For VS Code, or for a manual VSCodium installation, download the VSIX from the [latest GitHub release](https://github.com/SorinGFS/codium-workspace-data/releases/latest) and run **Extensions: Install from VSIX...** from the Command Palette. Manually installed VSIX copies normally require manual updates unless **Auto Update** is explicitly enabled for the extension. The corresponding command-line installations are:
 
 ```sh
 codium --install-extension codium-workspace-data-<version>.vsix
+code --install-extension codium-workspace-data-<version>.vsix
 ```
 
-Open the target project's repository folder and run **Developer: Reload Window** after installation. The extension creates one **Workspace Data** Source Control provider for every open local workspace folder containing ordinary `#/.data-state.json` state.
+Open the target project's repository folder. The extension creates one **Workspace Data** Source Control provider for every open local workspace folder containing an ordinary `#/.data-state.json` file. If a provider does not appear immediately after installation, run **Developer: Reload Window** once.
 
 ### 2. Reveal Workspace Data in Source Control
 
@@ -86,4 +95,4 @@ The extension has no telemetry and implements no direct network client. It invok
 
 ## Open VSX
 
-The package is intended for publication to [Open VSX](https://open-vsx.org/).
+The extension is published in the [Open VSX Registry](https://open-vsx.org/extension/SorinGFS/codium-workspace-data). Each Open VSX release uses the same VSIX artifact attached to its corresponding GitHub release.
