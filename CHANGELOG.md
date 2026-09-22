@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.5
+
+- Show **Publish** and **Publish and Merge Owned** progress in the Source Control view instead of a cancellable notification.
+- Rely on contributed-command activation while retaining automatic activation for workspace-data projects.
+
 ## 0.1.4
 
 - Make installation through VSCodium's Open VSX interface the primary documented setup path.

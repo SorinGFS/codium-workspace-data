@@ -44,8 +44,8 @@ class OperationManager {
     constructor(output) {
         this.output = output;
     }
-    // Run one mutating CLI operation without allowing overlapping load or publication in the same folder.
-    async run(folder, title, args) {
+    // Run one mutating CLI operation with serialized access and its selected native progress surface.
+    async run(folder, title, args, progressLocation = vscode.ProgressLocation.Notification) {
         const key = folder.uri.toString();
         if (this.activeRoots.has(key)) {
             void vscode.window.showInformationMessage(`A Workspace Data operation is already running for ${folder.name}.`);
@@ -54,11 +54,11 @@ class OperationManager {
         this.activeRoots.add(key);
         this.output.appendLine(`\n> gh workspace-data ${args.join(' ')} (${folder.uri.fsPath})`);
         try {
-            await vscode.window.withProgress({
-                location: vscode.ProgressLocation.Notification,
-                title,
-                cancellable: true
-            }, async (_progress, token) => {
+            // Keep destructive Load cancellable while publication uses unobtrusive Source Control progress.
+            const progressOptions = progressLocation === vscode.ProgressLocation.SourceControl
+                ? { location: vscode.ProgressLocation.SourceControl }
+                : { location: vscode.ProgressLocation.Notification, title, cancellable: true };
+            await vscode.window.withProgress(progressOptions, async (_progress, token) => {
                 await new cli_1.WorkspaceDataCli(folder, this.output).synchronize(args, token);
             });
             return true;

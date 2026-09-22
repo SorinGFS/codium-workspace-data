@@ -74,7 +74,7 @@ Choose **Overwrite** to discard those changes and continue, or cancel to retain 
 
 ### 5. Publish
 
-Use **Workspace Data: Publish** to create or update pull requests for changed public and private data. Use the adjacent **Workspace Data: Publish and Merge Owned** toolbar button only when actor-owned pull requests should be merged immediately where repository rules permit it. Per-workspace locking prevents overlapping load and publication operations.
+Use **Workspace Data: Publish** to create or update pull requests for changed public and private data. Use the adjacent **Workspace Data: Publish and Merge Owned** toolbar button only when actor-owned pull requests should be merged immediately where repository rules permit it. Publication progress appears in the Source Control view without opening a cancellable notification. Per-workspace locking prevents overlapping load and publication operations.
 
 If a refresh or synchronization operation fails, open **View: Toggle Output** and select **Workspace Data** for the CLI diagnostic.
 

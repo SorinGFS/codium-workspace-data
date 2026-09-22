@@ -268,7 +268,7 @@ class WorkspaceDataController implements vscode.Disposable {
         const title = mergeOwned
             ? `Publishing and Merging Owned Workspace Data for ${repository.folder.name}`
             : `Publishing Workspace Data for ${repository.folder.name}`;
-        if (await this.operations.run(repository.folder, title, args)) {
+        if (await this.operations.run(repository.folder, title, args, vscode.ProgressLocation.SourceControl)) {
             await this.refreshRepository(repository, true);
         }
     }

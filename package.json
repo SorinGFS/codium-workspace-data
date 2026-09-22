@@ -24,11 +24,7 @@
     "vscodium"
   ],
   "activationEvents": [
-    "workspaceContains:#/.data-state.json",
-    "onCommand:workspaceData.load",
-    "onCommand:workspaceData.refresh",
-    "onCommand:workspaceData.publish",
-    "onCommand:workspaceData.publishAndMergeOwned"
+    "workspaceContains:#/.data-state.json"
   ],
   "main": "./dist/extension.js",
   "files": [
