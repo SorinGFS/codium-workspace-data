@@ -2,7 +2,7 @@
   "name": "codium-workspace-data",
   "displayName": "Workspace Data",
   "description": "Review gh-workspace-data changes against their exact loaded GitHub baselines.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "SorinGFS",
   "license": "MIT",
   "repository": {
