@@ -1,5 +1,5 @@
 "use strict";
-// Activate the native SCM presentation while delegating every workspace-data decision to the CLI protocol.
+// Present incremental native SCM and persist CLI-owned publication checkpoints without loading data.
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -104,7 +104,16 @@ class WorkspaceDataController {
                 return;
             }
             const activeDataEditor = this.activeWorkspaceDataEditor(folder);
-            if (await this.operations.run(folder, `Loading Workspace Data for ${folder.name}`, ['load'])) {
+            const currentRepository = this.repositories.get(folder.uri.toString());
+            if (await this.operations.run(folder, `Loading Workspace Data for ${folder.name}`, ['load'], vscode.ProgressLocation.Notification, async (cli, token) => {
+                await currentRepository?.suspendRefresh();
+                try {
+                    await cli.synchronize(['load'], token);
+                }
+                finally {
+                    await currentRepository?.resumeRefresh(true);
+                }
+            })) {
                 await this.reloadActiveWorkspaceDataEditor(activeDataEditor);
                 this.discover();
                 const repository = this.repositories.get(folder.uri.toString());
@@ -148,7 +157,7 @@ class WorkspaceDataController {
             }
             const detail = error instanceof Error ? error.message : String(error);
             this.output.appendLine(`Workspace Data prerequisite check failed: ${detail}`);
-            const selection = await vscode.window.showWarningMessage('Workspace Data requires SorinGFS/gh-workspace-data with compatible inspection and Load capabilities.', 'Install or Upgrade', 'View Documentation');
+            const selection = await vscode.window.showWarningMessage('Workspace Data requires SorinGFS/gh-workspace-data with compatible inspection, publication results, and Load capabilities.', 'Install or Upgrade', 'View Documentation');
             if (selection === 'View Documentation') {
                 await vscode.env.openExternal(vscode.Uri.parse('https://github.com/SorinGFS/gh-workspace-data#install-and-get-started'));
                 return false;
@@ -249,7 +258,7 @@ class WorkspaceDataController {
         const relative = path.relative(folder.uri.fsPath, uri.fsPath).split(path.sep).join('/');
         return relative.startsWith('#/public/') || relative.startsWith('#/private/');
     }
-    // Publish through the selected repository and refresh only after a successful CLI operation.
+    // Publish disk snapshots without loading; persist every confirmed checkpoint before ending progress.
     async runPublication(mergeOwned) {
         const repository = await this.pickRepository();
         if (!repository || !await this.ensurePrerequisites(repository.folder)
@@ -260,9 +269,15 @@ class WorkspaceDataController {
         const title = mergeOwned
             ? `Publishing and Merging Owned Workspace Data for ${repository.folder.name}`
             : `Publishing Workspace Data for ${repository.folder.name}`;
-        if (await this.operations.run(repository.folder, title, args, vscode.ProgressLocation.SourceControl)) {
-            await this.refreshRepository(repository, true);
-        }
+        await this.operations.run(repository.folder, title, args, vscode.ProgressLocation.SourceControl, async (cli, token) => {
+            await repository.suspendRefresh();
+            try {
+                await cli.publish(mergeOwned, (event) => repository.acknowledge(event), token);
+            }
+            finally {
+                await repository.resumeRefresh(false);
+            }
+        });
     }
     // Refresh one repository and explain protocol states that need a user action.
     async refreshRepository(repository, notify) {

@@ -75,13 +75,19 @@ function parseCapabilities(raw) {
         || typeof value.version !== 'string' || value.version.length === 0
         || !Array.isArray(value.inspectionProtocolVersions)
         || !value.inspectionProtocolVersions.every((version) => Number.isSafeInteger(version))
-        || !value.inspectionProtocolVersions.includes(1) || value.loadBehavior !== 'replace') {
+        || !value.inspectionProtocolVersions.includes(1)
+        || !Array.isArray(value.publicationResultProtocolVersions)
+        || !value.publicationResultProtocolVersions.includes(1)
+        || !Array.isArray(value.identityProtocolVersions) || !value.identityProtocolVersions.includes(1)
+        || value.loadBehavior !== 'replace') {
         throw new Error('The installed gh-workspace-data extension does not report the required capabilities.');
     }
     return {
         command: 'gh workspace-data',
         version: value.version,
         inspectionProtocolVersions: value.inspectionProtocolVersions,
+        publicationResultProtocolVersions: value.publicationResultProtocolVersions,
+        identityProtocolVersions: value.identityProtocolVersions,
         loadBehavior: 'replace'
     };
 }

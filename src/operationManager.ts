@@ -14,7 +14,8 @@ export class OperationManager {
         folder: vscode.WorkspaceFolder,
         title: string,
         args: readonly string[],
-        progressLocation: vscode.ProgressLocation = vscode.ProgressLocation.Notification
+        progressLocation: vscode.ProgressLocation = vscode.ProgressLocation.Notification,
+        operation?: (cli: WorkspaceDataCli, token: vscode.CancellationToken) => Promise<void>
     ): Promise<boolean> {
         const key = folder.uri.toString();
         if (this.activeRoots.has(key)) {
@@ -29,7 +30,12 @@ export class OperationManager {
                 ? { location: vscode.ProgressLocation.SourceControl }
                 : { location: vscode.ProgressLocation.Notification, title, cancellable: true };
             await vscode.window.withProgress(progressOptions, async (_progress, token) => {
-                await new WorkspaceDataCli(folder, this.output).synchronize(args, token);
+                const cli = new WorkspaceDataCli(folder, this.output);
+                if (operation) {
+                    await operation(cli, token);
+                } else {
+                    await cli.synchronize(args, token);
+                }
             });
             return true;
         } catch (error) {

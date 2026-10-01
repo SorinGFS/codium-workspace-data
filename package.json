@@ -2,7 +2,7 @@
   "name": "codium-workspace-data",
   "displayName": "Workspace Data",
   "description": "Review gh-workspace-data changes against their exact loaded GitHub baselines.",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "publisher": "SorinGFS",
   "license": "MIT",
   "repository": {
@@ -36,8 +36,8 @@
   "scripts": {
     "compile": "node node_modules/typescript/bin/tsc -p .",
     "check": "node node_modules/typescript/bin/tsc -p . --noEmit",
-    "test": "npm run compile && node --test test/model.test.js test/decoration.test.js test/package.test.js",
-    "package": "node node_modules/@vscode/vsce/vsce package"
+    "test": "npm run compile && node --test test/model.test.js test/decoration.test.js test/package.test.js test/index.test.js test/repository.test.js test/cli.test.js",
+    "package": "node node_modules/@vscode/vsce/vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^20.17.0",

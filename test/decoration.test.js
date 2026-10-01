@@ -55,6 +55,7 @@ function createRepository(status) {
             baseline: status === 'added' ? { available: false } : { available: true, size: 1 }
         }]
     };
+    repository.changesByPath = new Map(repository.report.changes.map((change) => [change.workspacePath, change]));
     return {
         repository,
         uri: {

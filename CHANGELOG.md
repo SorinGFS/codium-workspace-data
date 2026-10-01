@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.6
+
+- Publish and Merge Owned never reload or replace workspace data; persist verified CLI checkpoints atomically, including partial successes.
+- Maintain an incremental local SCM index, stream hashes only for invalidated files, and serialize/coalesce refreshes.
+- Cache Explorer decorations and quick-diff path lookups.
+- Preserve files edited during publication and reject metadata invalidated by external state replacement.
+- Require the new metadata-only publication capability from gh-workspace-data 0.9.0; explicit Load remains replacement-style.
+
 ## 0.1.5
 
 - Show **Publish** and **Publish and Merge Owned** progress in the Source Control view instead of a cancellable notification.

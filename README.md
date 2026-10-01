@@ -9,9 +9,9 @@ The extension creates one **Workspace Data** Source Control provider for each wo
 - VSCodium or VS Code 1.85 or newer
 - GitHub CLI with the `SorinGFS/gh-workspace-data` extension installed
 - A local file workspace hosted in a Git repository
-- `gh workspace-data capabilities --json` reporting inspection protocol 1 and replacement-style loading
+- `gh workspace-data capabilities --json` reporting inspection, canonical-identity, and metadata-only publication protocols 1, plus replacement-style loading (provided by gh-workspace-data 0.9.0)
 
-No second Git repository is created under `#/`, and the editor does not determine repository mappings or query the latest remote revision. Mapping, authentication, baselines, loading, and publication remain owned by `gh-workspace-data`.
+No second Git repository is created under `#/`, and the editor does not determine repository mappings or query the latest remote revision. Mapping, authentication, authoritative publication/baseline metadata, loading, and remote publication remain owned by `gh-workspace-data`. Codium owns the derived local SCM index and persists publication acknowledgements into `.data-state.json`.
 
 ## Usage
 
@@ -20,7 +20,7 @@ No second Git repository is created under `#/`, and the editor does not determin
 
 This extension assumes the target project is managed by `gh-workspace-data`. See the [`gh-workspace-data` documentation](https://github.com/SorinGFS/gh-workspace-data#readme) for initialization, repository selection, loading, and publication behavior.
 
-If GitHub CLI is unavailable, the extension offers to open its setup page. If `gh-workspace-data` is missing or does not report the required capabilities, the extension offers **Install or Upgrade** and **View Documentation**. Compatibility is determined from the reported inspection protocol and Load behavior rather than from the package version label. It runs `gh extension install SorinGFS/gh-workspace-data --force` only after the user explicitly selects **Install or Upgrade**; it never installs user-wide software silently.
+If GitHub CLI is unavailable, the extension offers to open its setup page. If `gh-workspace-data` is missing or does not report the required capabilities, the extension offers **Install or Upgrade** and **View Documentation**. Compatibility is determined from the reported inspection, identity, publication-result protocols and Load behavior rather than from the package version label. It runs `gh extension install SorinGFS/gh-workspace-data --force` only after the user explicitly selects **Install or Upgrade**; it never installs user-wide software silently.
 
 Before Load or either Publish command, the extension checks the active GitHub CLI authentication for `github.com`. If authentication is unavailable, it offers **Open Authentication Setup** instead of starting the operation. Complete authentication in GitHub CLI, then run the command again.
 
@@ -58,11 +58,11 @@ Add, edit, or delete ordinary files under:
 #/private/<concern>/...
 ```
 
-Saved filesystem changes trigger a debounced local refresh. The appropriate Source Control group then shows each file as added, modified, or deleted. Explorer marks existing modified files with `M` and newly added files with `U`, using the corresponding theme colors. Deleted paths remain visible in Source Control but cannot carry an Explorer badge because the filesystem entry no longer exists.
+Saved filesystem changes trigger a debounced, single-flight local refresh. After initial reconciliation, the in-memory SCM index rehashes only invalidated files/subtrees; decoration and quick-diff lookups use a path cache. The appropriate Source Control group then shows each file as added, modified, or deleted. Explorer marks existing modified files with `M` and newly added files with `U`, using the corresponding theme colors. Deleted paths remain visible in Source Control but cannot carry an Explorer badge because the filesystem entry no longer exists.
 
 Select a resource to open a native two-way diff against the exact baseline recorded by the last successful load or publish. Modified files also support the editor's quick-diff gutter. Added files compare with an empty baseline, and deleted files compare their loaded baseline with an empty result.
 
-Use **Workspace Data: Refresh** when an explicit refresh is useful. Refresh is local-only and does not query GitHub for a newer revision.
+Use **Workspace Data: Refresh** when an explicit refresh is useful. Manual refresh and window refocus perform a complete local reconciliation to recover missed watcher events. Refresh verifies the canonical project identity locally but does not query GitHub for a newer revision.
 
 ### 4. Understand Load
 
@@ -76,6 +76,10 @@ Choose **Overwrite** to discard those changes and continue, or cancel to retain 
 
 Use **Workspace Data: Publish** to create or update pull requests for changed public and private data. Use the adjacent **Workspace Data: Publish and Merge Owned** toolbar button only when actor-owned pull requests should be merged immediately where repository rules permit it. Publication progress appears in the Source Control view without opening a cancellable notification. Per-workspace locking prevents overlapping load and publication operations.
 
+Neither publication command loads or replaces `#/public` or `#/private`. The CLI returns ordered, verified JSON Lines checkpoints; Codium atomically updates only `.data-state.json` and advances its cached SCM baseline. Files edited after capture remain modified. Successful checkpoints are retained even when another visibility or an automatic merge fails. The CLI rejects differing upstream project trees before pushing rather than silently loading them; reconcile those differences through an explicit, overwrite-confirmed Load.
+
+A short-lived `.data-state.lock` serializes metadata commits with explicit CLI Load. If an interrupted process leaves this lock behind, verify that no operation is running before removing that ordinary lock file. State-fingerprint mismatches stop acknowledgement instead of overwriting an external replacement.
+
 If a refresh or synchronization operation fails, open **View: Toggle Output** and select **Workspace Data** for the CLI diagnostic.
 
 </details>
@@ -87,7 +91,7 @@ If a refresh or synchronization operation fails, open **View: Toggle Output** an
 - **Workspace Data: Publish**
 - **Workspace Data: Publish and Merge Owned**
 
-Refresh runs the local-only `gh workspace-data status --json` protocol. Baseline documents are fetched lazily with `gh workspace-data show`, verified by that command, cached under immutable revision-bearing URIs, and exposed through a read-only file system provider.
+Refresh uses Codium's local in-memory index against the CLI-owned baseline. `gh workspace-data status --json` remains available as an independent full local verification command. Baseline documents are fetched lazily with `gh workspace-data show`, verified by that command, cached under immutable revision-bearing URIs, and exposed through a read-only file system provider.
 
 ## Privacy
 

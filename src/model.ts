@@ -9,6 +9,8 @@ export interface WorkspaceDataCapabilities {
     command: 'gh workspace-data';
     version: string;
     inspectionProtocolVersions: number[];
+    publicationResultProtocolVersions: number[];
+    identityProtocolVersions: number[];
     loadBehavior: 'replace';
 }
 
@@ -108,13 +110,19 @@ export function parseCapabilities(raw: string): WorkspaceDataCapabilities {
         || typeof value.version !== 'string' || value.version.length === 0
         || !Array.isArray(value.inspectionProtocolVersions)
         || !value.inspectionProtocolVersions.every((version) => Number.isSafeInteger(version))
-        || !value.inspectionProtocolVersions.includes(1) || value.loadBehavior !== 'replace') {
+        || !value.inspectionProtocolVersions.includes(1)
+        || !Array.isArray(value.publicationResultProtocolVersions)
+        || !value.publicationResultProtocolVersions.includes(1)
+        || !Array.isArray(value.identityProtocolVersions) || !value.identityProtocolVersions.includes(1)
+        || value.loadBehavior !== 'replace') {
         throw new Error('The installed gh-workspace-data extension does not report the required capabilities.');
     }
     return {
         command: 'gh workspace-data',
         version: value.version,
         inspectionProtocolVersions: value.inspectionProtocolVersions as number[],
+        publicationResultProtocolVersions: value.publicationResultProtocolVersions as number[],
+        identityProtocolVersions: value.identityProtocolVersions as number[],
         loadBehavior: 'replace'
     };
 }

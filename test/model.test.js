@@ -16,11 +16,15 @@ test('parses compatible CLI capabilities', () => {
         command: 'gh workspace-data',
         version: '0.1.0-compatible',
         inspectionProtocolVersions: [1],
+        publicationResultProtocolVersions: [1],
+        identityProtocolVersions: [1],
         loadBehavior: 'replace'
     })), {
         command: 'gh workspace-data',
         version: '0.1.0-compatible',
         inspectionProtocolVersions: [1],
+        publicationResultProtocolVersions: [1],
+        identityProtocolVersions: [1],
         loadBehavior: 'replace'
     });
 });
@@ -32,6 +36,13 @@ test('rejects incompatible CLI capabilities', () => {
         version: '0.7.1',
         inspectionProtocolVersions: [1],
         loadBehavior: 'reconcile'
+    })), /required capabilities/);
+});
+
+// Reject older CLIs that would reload or write state during publication.
+test('requires metadata-only publication capability', () => {
+    assert.throws(() => parseCapabilities(JSON.stringify({
+        command: 'gh workspace-data', version: '0.8.0', inspectionProtocolVersions: [1], loadBehavior: 'replace'
     })), /required capabilities/);
 });
 

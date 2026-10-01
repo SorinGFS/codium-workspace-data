@@ -45,7 +45,7 @@ class OperationManager {
         this.output = output;
     }
     // Run one mutating CLI operation with serialized access and its selected native progress surface.
-    async run(folder, title, args, progressLocation = vscode.ProgressLocation.Notification) {
+    async run(folder, title, args, progressLocation = vscode.ProgressLocation.Notification, operation) {
         const key = folder.uri.toString();
         if (this.activeRoots.has(key)) {
             void vscode.window.showInformationMessage(`A Workspace Data operation is already running for ${folder.name}.`);
@@ -59,7 +59,13 @@ class OperationManager {
                 ? { location: vscode.ProgressLocation.SourceControl }
                 : { location: vscode.ProgressLocation.Notification, title, cancellable: true };
             await vscode.window.withProgress(progressOptions, async (_progress, token) => {
-                await new cli_1.WorkspaceDataCli(folder, this.output).synchronize(args, token);
+                const cli = new cli_1.WorkspaceDataCli(folder, this.output);
+                if (operation) {
+                    await operation(cli, token);
+                }
+                else {
+                    await cli.synchronize(args, token);
+                }
             });
             return true;
         }

@@ -39,6 +39,7 @@ const path = __importStar(require("node:path"));
 const vscode = __importStar(require("vscode"));
 const cli_1 = require("./cli");
 const resource_1 = require("./resource");
+const workspaceIndex_1 = require("./workspaceIndex");
 class WorkspaceDataRepository {
     folder;
     output;
@@ -50,7 +51,13 @@ class WorkspaceDataRepository {
     disposables = [];
     cli;
     report;
-    refreshSequence = 0;
+    index;
+    changesByPath = new Map();
+    refreshWork;
+    refreshPending = false;
+    fullRefreshPending = false;
+    suspended = false;
+    identityVerified = false;
     refreshTimer;
     disposed = false;
     // Create native SCM groups, immutable baseline routing, and one debounced namespace watcher.
@@ -58,6 +65,7 @@ class WorkspaceDataRepository {
         this.folder = folder;
         this.output = output;
         this.cli = new cli_1.WorkspaceDataCli(folder, output);
+        this.index = new workspaceIndex_1.WorkspaceDataIndex(folder.uri.fsPath);
         this.onDidChangeFileDecorations = this.decorationEmitter.event;
         this.sourceControl = vscode.scm.createSourceControl('workspaceData', 'Workspace Data', folder.uri);
         this.sourceControl.inputBox.visible = false;
@@ -67,20 +75,90 @@ class WorkspaceDataRepository {
         this.publicGroup.hideWhenEmpty = true;
         this.privateGroup.hideWhenEmpty = true;
         this.disposables.push(this.publicGroup, this.privateGroup, this.sourceControl, this.decorationEmitter, vscode.window.registerFileDecorationProvider(this), baselineProvider.register(folder.uri.toString(), this));
-        // Debounce all generated-namespace events into local protocol refreshes.
+        // Track only data/state invalidations; publication staging never schedules a complete scan.
         const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, '#/**'));
-        const schedule = () => this.scheduleRefresh();
-        this.disposables.push(watcher, watcher.onDidCreate(schedule), watcher.onDidChange(schedule), watcher.onDidDelete(schedule));
+        const schedule = (uri) => {
+            if (this.index.invalidate(path.relative(folder.uri.fsPath, uri.fsPath))) {
+                this.scheduleRefresh();
+            }
+        };
+        this.disposables.push(watcher, watcher.onDidCreate(schedule), watcher.onDidChange(schedule), watcher.onDidDelete(schedule), vscode.window.onDidChangeWindowState((state) => {
+            if (state.focused) {
+                void this.refresh(true).catch((error) => this.logRefreshError(error));
+            }
+        }));
     }
-    // Replace both resource groups only with the newest completed protocol response.
-    async refresh() {
-        const sequence = ++this.refreshSequence;
-        const report = await this.cli.status();
-        if (this.disposed || sequence !== this.refreshSequence) {
-            return report;
+    // Coalesce refresh requests into one worker; filesystem bursts never create overlapping scans.
+    refresh(full = true) {
+        this.refreshPending = true;
+        this.fullRefreshPending ||= full;
+        if (this.suspended || this.disposed) {
+            return this.report ? Promise.resolve(this.report) : Promise.reject(new Error('Workspace Data refresh is suspended.'));
+        }
+        if (!this.refreshWork) {
+            this.refreshWork = this.drainRefreshes().finally(() => {
+                this.refreshWork = undefined;
+                if (this.refreshPending && !this.suspended && !this.disposed) {
+                    this.scheduleRefresh();
+                }
+            });
+        }
+        return this.refreshWork;
+    }
+    // Drain requests received during asynchronous hashing while publishing only coherent snapshots.
+    async drainRefreshes() {
+        let report = this.report;
+        while (this.refreshPending && !this.suspended && !this.disposed) {
+            this.refreshPending = false;
+            const full = this.fullRefreshPending;
+            this.fullRefreshPending = false;
+            if (full || !this.identityVerified) {
+                this.index.bindIdentity(await this.cli.identity());
+                this.identityVerified = true;
+            }
+            report = await this.index.refresh(full);
+            this.render(report);
+        }
+        if (!report) {
+            throw new Error('Workspace Data has no current inspection snapshot.');
+        }
+        return report;
+    }
+    // Retain watcher invalidations during a mutation and wait for the current local scan to finish.
+    async suspendRefresh() {
+        if (!this.report) {
+            await this.refresh(true);
+        }
+        this.suspended = true;
+        if (this.refreshTimer) {
+            clearTimeout(this.refreshTimer);
+            this.refreshTimer = undefined;
+        }
+        await this.refreshWork?.catch((error) => this.logRefreshError(error));
+    }
+    // Finish every mutation, including partial failures, with one coalesced local reconciliation.
+    async resumeRefresh(full = false) {
+        this.suspended = false;
+        await this.refresh(full);
+    }
+    // Persist CLI-owned metadata and immediately update native SCM from cached content digests.
+    async acknowledge(event) {
+        const state = await this.index.store.apply(event);
+        this.index.acceptState(state);
+        this.render(this.index.snapshot());
+    }
+    // Replace resource/decorations snapshots; native SCM computes the renderer-side resource splices.
+    render(report) {
+        if (this.disposed) {
+            return;
         }
         const previousDecorations = this.decoratedUris(this.report);
         this.report = report;
+        this.changesByPath.clear();
+        // Serve Explorer decorations and quick-diff requests through constant-time path lookups.
+        for (const change of report.changes) {
+            this.changesByPath.set(change.workspacePath, change);
+        }
         const resources = report.state === 'ready'
             ? report.changes.map((change) => this.createResource(change))
             : [];
@@ -95,7 +173,6 @@ class WorkspaceDataRepository {
         if (affectedDecorations.size > 0) {
             this.decorationEmitter.fire([...affectedDecorations.values()]);
         }
-        return report;
     }
     // Decorate existing modified and added data files with familiar Explorer status badges.
     provideFileDecoration(uri) {
@@ -133,13 +210,20 @@ class WorkspaceDataRepository {
     scheduleRefresh() {
         if (this.refreshTimer) {
             clearTimeout(this.refreshTimer);
+            this.refreshTimer = undefined;
+        }
+        if (this.suspended || this.disposed) {
+            this.refreshPending = true;
+            return;
         }
         this.refreshTimer = setTimeout(() => {
             this.refreshTimer = undefined;
-            void this.refresh().catch((error) => {
-                this.output.appendLine(`Workspace Data refresh failed for ${this.folder.name}: ${error instanceof Error ? error.message : String(error)}`);
-            });
+            void this.refresh(false).catch((error) => this.logRefreshError(error));
         }, 250);
+    }
+    // Keep background refresh diagnostics out of repeated modal notifications.
+    logRefreshError(error) {
+        this.output.appendLine(`Workspace Data refresh failed for ${this.folder.name}: ${error instanceof Error ? error.message : String(error)}`);
     }
     // Create one immutable baseline URI and its corresponding native SCM resource.
     createResource(change) {
@@ -184,12 +268,13 @@ class WorkspaceDataRepository {
         if (relative.startsWith('../') || path.isAbsolute(relative)) {
             return undefined;
         }
-        return this.report?.changes.find((change) => change.workspacePath === relative);
+        return this.changesByPath.get(relative);
     }
     // Release watchers, SCM resources, timers, and baseline routing for this folder.
     dispose() {
         this.disposed = true;
-        this.refreshSequence += 1;
+        this.refreshPending = false;
+        this.changesByPath.clear();
         if (this.refreshTimer) {
             clearTimeout(this.refreshTimer);
         }
