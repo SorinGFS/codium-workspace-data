@@ -1,4 +1,4 @@
-// Serialize synchronization per workspace folder and present cancellable native progress.
+// Serialize editor synchronization and present native progress; the CLI enforces cross-process locking.
 
 import * as vscode from 'vscode';
 import { WorkspaceDataCli } from './cli';

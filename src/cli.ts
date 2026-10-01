@@ -79,13 +79,14 @@ export class WorkspaceDataCli {
         await this.execute(args, token, true);
     }
 
-    // Consume authoritative publication checkpoints without loading files or reconstructing remote state.
+    // Consume persisted checkpoint notifications without writing state, loading files, or reconstructing remote state.
     public async publish(
         mergeOwned: boolean,
-        acknowledge: (event: PublicationEvent) => Promise<void>,
+        observe: (event: PublicationEvent) => Promise<void> | void,
         token?: vscode.CancellationToken
     ): Promise<void> {
-        const results = new PublicationResultStream(acknowledge);
+        await this.capabilities(token);
+        const results = new PublicationResultStream(observe);
         await this.executeGitHubCli(['workspace-data', 'publish', ...(mergeOwned ? ['--merge-owned'] : [])], token, true, results);
     }
 
@@ -177,7 +178,7 @@ export class WorkspaceDataCli {
                 }
                 settled = true;
                 try {
-                    // Commit earlier successful visibility outcomes before handling partial failure/cancellation.
+                    // Drain persisted visibility notifications before handling partial failure/cancellation.
                     await results?.finish();
                     if (outputFailure) {
                         throw outputFailure;

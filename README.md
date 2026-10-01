@@ -9,9 +9,9 @@ The extension creates one **Workspace Data** Source Control provider for each wo
 - VSCodium or VS Code 1.85 or newer
 - GitHub CLI with the `SorinGFS/gh-workspace-data` extension installed
 - A local file workspace hosted in a Git repository
-- `gh workspace-data capabilities --json` reporting inspection, canonical-identity, and metadata-only publication protocols 1, plus replacement-style loading (provided by gh-workspace-data 0.9.0)
+- `gh workspace-data capabilities --json` reporting inspection and canonical-identity protocols 1, publication-result protocol 2, `publicationStatePersistence: "cli"`, and replacement-style loading (provided by gh-workspace-data 0.10.0)
 
-No second Git repository is created under `#/`, and the editor does not determine repository mappings or query the latest remote revision. Mapping, authentication, authoritative publication/baseline metadata, loading, and remote publication remain owned by `gh-workspace-data`. Codium owns the derived local SCM index and persists publication acknowledgements into `.data-state.json`.
+No second Git repository is created under `#/`, and the editor does not determine repository mappings or query the latest remote revision. Mapping, authentication, authoritative publication/baseline metadata, loading, and remote publication remain owned by `gh-workspace-data`. The CLI is the sole writer of `.data-state.json`. Codium owns only a disposable, read-only derived SCM index.
 
 ## Usage
 
@@ -20,7 +20,7 @@ No second Git repository is created under `#/`, and the editor does not determin
 
 This extension assumes the target project is managed by `gh-workspace-data`. See the [`gh-workspace-data` documentation](https://github.com/SorinGFS/gh-workspace-data#readme) for initialization, repository selection, loading, and publication behavior.
 
-If GitHub CLI is unavailable, the extension offers to open its setup page. If `gh-workspace-data` is missing or does not report the required capabilities, the extension offers **Install or Upgrade** and **View Documentation**. Compatibility is determined from the reported inspection, identity, publication-result protocols and Load behavior rather than from the package version label. It runs `gh extension install SorinGFS/gh-workspace-data --force` only after the user explicitly selects **Install or Upgrade**; it never installs user-wide software silently.
+If GitHub CLI is unavailable, the extension offers to open its setup page. If `gh-workspace-data` is missing or does not report the required capabilities, the extension offers **Install or Upgrade** and **View Documentation**. Compatibility is determined from the reported inspection, identity, publication-result protocols, CLI-owned checkpoint persistence, and Load behavior rather than from the package version label. It runs `gh extension install SorinGFS/gh-workspace-data --force` only after the user explicitly selects **Install or Upgrade**; it never installs user-wide software silently.
 
 Before Load or either Publish command, the extension checks the active GitHub CLI authentication for `github.com`. If authentication is unavailable, it offers **Open Authentication Setup** instead of starting the operation. Complete authentication in GitHub CLI, then run the command again.
 
@@ -62,7 +62,7 @@ Saved filesystem changes trigger a debounced, single-flight local refresh. After
 
 Select a resource to open a native two-way diff against the exact baseline recorded by the last successful load or publish. Modified files also support the editor's quick-diff gutter. Added files compare with an empty baseline, and deleted files compare their loaded baseline with an empty result.
 
-Use **Workspace Data: Refresh** when an explicit refresh is useful. Manual refresh and window refocus perform a complete local reconciliation to recover missed watcher events. Refresh verifies the canonical project identity locally but does not query GitHub for a newer revision.
+Use **Workspace Data: Refresh** when an explicit refresh is useful. Manual refresh and window refocus reread and fingerprint `.data-state.json` before completely reconciling local files, recovering missed data and metadata watcher events. Ordinary refreshes check a lightweight state-file signature; external checkpoint changes invalidate the derived baseline. Refresh verifies the canonical project identity locally but does not query GitHub for a newer revision.
 
 ### 4. Understand Load
 
@@ -76,11 +76,36 @@ Choose **Overwrite** to discard those changes and continue, or cancel to retain 
 
 Use **Workspace Data: Publish** to create or update pull requests for changed public and private data. Use the adjacent **Workspace Data: Publish and Merge Owned** toolbar button only when actor-owned pull requests should be merged immediately where repository rules permit it. Publication progress appears in the Source Control view without opening a cancellable notification. Per-workspace locking prevents overlapping load and publication operations.
 
-Neither publication command loads or replaces `#/public` or `#/private`. The CLI returns ordered, verified JSON Lines checkpoints; Codium atomically updates only `.data-state.json` and advances its cached SCM baseline. Files edited after capture remain modified. Successful checkpoints are retained even when another visibility or an automatic merge fails. The CLI rejects differing upstream project trees before pushing rather than silently loading them; reconcile those differences through an explicit, overwrite-confirmed Load.
+Neither publication command loads or replaces `#/public` or `#/private`. The CLI atomically persists each successful metadata checkpoint before emitting protocol-2 JSON Lines notifications. Codium observes those notifications and reads the durable checkpoint to update its cached SCM baseline; it never writes `.data-state.json`. Files edited after capture remain modified. Successful checkpoints survive another visibility's failure, a deferred merge, or a notification-consumer failure. The CLI rejects differing upstream project trees before pushing rather than silently loading them; preserve local edits before an explicit, overwrite-confirmed Load.
 
-A short-lived `.data-state.lock` serializes metadata commits with explicit CLI Load. If an interrupted process leaves this lock behind, verify that no operation is running before removing that ordinary lock file. State-fingerprint mismatches stop acknowledgement instead of overwriting an external replacement.
+The CLI holds `.data-state.lock` throughout initialization, Load, publication, and merging, preventing overlapping terminal/editor synchronization. Codium defers reconciliation while that lock exists and responds to its release. If an interrupted process leaves the lock behind, verify that no operation is running before removing that ordinary lock file. State-fingerprint mismatches stop metadata replacement rather than overwriting external changes.
 
 If a refresh or synchronization operation fails, open **View: Toggle Output** and select **Workspace Data** for the CLI diagnostic.
+
+### 6. Continue after merging in GitHub
+
+For the normal review-first editor workflow:
+
+1. Save and review changes, then choose **Workspace Data: Publish**.
+2. Review and merge the PRs in GitHub.
+3. Continue editing in Codium. No Load is required solely because you merged your own published changes, provided the merged project data matches what you published.
+4. Publish the next changes. An open PR is updated; after it is merged, the next changed publication creates a new PR. Publishing unchanged data does not create a new PR.
+
+The published snapshot already became the local baseline when the CLI persisted its checkpoint, before the manual merge. Edits made after capture remain local changes. GitHub merges are not automatically polled: **Refresh** reconciles local files against the recorded baseline but neither fetches remote data nor clears merged PR metadata.
+
+For a recorded, unchanged actor-owned PR, **Publish and Merge Owned** verifies its recorded head and can acknowledge a completed manual GitHub merge without merging again or loading. A changed publication replaces that visibility's old PR metadata; public and private metadata are independent. Non-owned PRs remain review-first. Use Load to reconcile their merged metadata when you intend to receive the selected remote snapshots, preserving unpublished work first.
+
+Use **Load** when you want the selected remote snapshots, including other people's changes, or want to reconcile merged PR metadata. It replaces local data rather than combining changes. Publish or back up work you still need before loading; after a remote-content mismatch, preserve local edits, load, and reapply the intended changes.
+
+### 7. Distinguish editor publication from terminal publication
+
+The editor's **Publish** runs `gh workspace-data publish`; **Publish and Merge Owned** runs `gh workspace-data publish --merge-owned`. Given the same workspace, authentication, and repository overrides, direct CLI calls and editor commands use identical remote logic and CLI-owned checkpoint persistence.
+
+You can alternate either publication mode between the terminal and editor without an intervening Load. Commands in Codium's integrated terminal also update the shared checkpoint. Codium detects disk changes rather than consuming that terminal's stdout; use **Refresh** if a watcher update was missed. Terminal operations cannot silently overlap editor synchronization because the CLI rejects competing operations through its shared lock.
+
+The remaining interface differences are presentation and Load protection: editor commands show native progress and diagnostics; **Workspace Data: Load** checks saved and dirty-editor changes and asks before overwriting, while terminal `gh workspace-data load` has no editor confirmation. Both Load variants replace data, so preserve unpublished work first.
+
+See the CLI documentation's [interface comparison](https://github.com/SorinGFS/gh-workspace-data#terminal-publication-versus-editor-publication) and [publication-cycle guidance](https://github.com/SorinGFS/gh-workspace-data#loading-and-publication) for the complete workflows.
 
 </details>
 
@@ -96,6 +121,10 @@ Refresh uses Codium's local in-memory index against the CLI-owned baseline. `gh 
 ## Privacy
 
 The extension has no telemetry and implements no direct network client. It invokes GitHub CLI for authentication checks and delegates authenticated baseline reads and synchronization operations to the installed `gh-workspace-data` extension.
+
+## Upgrade compatibility
+
+Use Codium 0.2.0 with gh-workspace-data 0.10.0 or newer reporting protocol 2 and CLI-owned persistence. Earlier protocol-1 editors expect to write publication checkpoints and are incompatible with this ownership change. Upgrade both components and reload the editor window before publishing. Existing valid version-2 state requires no destructive Load merely to upgrade.
 
 ## Open VSX
 

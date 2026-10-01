@@ -1,19 +1,19 @@
 "use strict";
-// Decode ordered JSON Lines results and drain successful acknowledgements even after a nonzero CLI exit.
+// Decode persisted JSON Lines notifications and drain partial successes even after a nonzero CLI exit.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PublicationResultStream = void 0;
 const node_string_decoder_1 = require("node:string_decoder");
 const state_1 = require("./state");
 class PublicationResultStream {
-    acknowledge;
+    observe;
     decoder = new node_string_decoder_1.StringDecoder('utf8');
     pending = '';
     work = Promise.resolve();
     failure;
     failed = false;
-    // Serialize state writes in exactly the CLI's acknowledgement order.
-    constructor(acknowledge) {
-        this.acknowledge = acknowledge;
+    // Preserve notification order without performing metadata writes in the editor.
+    constructor(observe) {
+        this.observe = observe;
     }
     // Preserve split Unicode sequences and incomplete JSON records across arbitrary pipe chunk boundaries.
     push(chunk) {
@@ -26,7 +26,7 @@ class PublicationResultStream {
             this.work = this.work.then(async () => {
                 if (!this.failed) {
                     try {
-                        await this.acknowledge((0, state_1.parsePublicationEvent)(line));
+                        await this.observe((0, state_1.parsePublicationEvent)(line));
                     }
                     catch (error) {
                         this.failed = true;
@@ -36,13 +36,13 @@ class PublicationResultStream {
             });
         }
     }
-    // Flush all prior successes before surfacing truncated results or failed metadata persistence.
+    // Flush persisted notifications before surfacing truncated results or failed observation.
     async finish() {
         this.pending += this.decoder.end();
         await this.work;
         if (this.failed) {
             const detail = this.failure instanceof Error ? this.failure.message : String(this.failure);
-            throw new Error(`Unable to acknowledge publication: ${detail}. Remote changes may already exist; review GitHub before retrying.`);
+            throw new Error(`Unable to observe publication: ${detail}. Remote changes may already exist; review GitHub before retrying.`);
         }
         if (this.pending.length) {
             throw new Error('Incomplete publication result; remote changes may already exist.');

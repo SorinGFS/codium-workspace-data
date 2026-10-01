@@ -1,4 +1,4 @@
-// Present incremental native SCM and persist CLI-owned publication checkpoints without loading data.
+// Present incremental native SCM from CLI-persisted checkpoints without writing synchronization state.
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -266,7 +266,7 @@ class WorkspaceDataController implements vscode.Disposable {
         return relative.startsWith('#/public/') || relative.startsWith('#/private/');
     }
 
-    // Publish disk snapshots without loading; persist every confirmed checkpoint before ending progress.
+    // Publish disk snapshots without loading; observe persisted checkpoints and reconcile before ending progress.
     private async runPublication(mergeOwned: boolean): Promise<void> {
         const repository = await this.pickRepository();
         if (!repository || !await this.ensurePrerequisites(repository.folder)
@@ -280,7 +280,7 @@ class WorkspaceDataController implements vscode.Disposable {
         await this.operations.run(repository.folder, title, args, vscode.ProgressLocation.SourceControl, async (cli, token) => {
             await repository.suspendRefresh();
             try {
-                await cli.publish(mergeOwned, (event) => repository.acknowledge(event), token);
+                await cli.publish(mergeOwned, (event) => repository.observePublication(event), token);
             } finally {
                 await repository.resumeRefresh(false);
             }

@@ -1,5 +1,5 @@
 "use strict";
-// Serialize synchronization per workspace folder and present cancellable native progress.
+// Serialize editor synchronization and present native progress; the CLI enforces cross-process locking.
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);

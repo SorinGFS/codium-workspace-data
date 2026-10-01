@@ -16,14 +16,16 @@ test('parses compatible CLI capabilities', () => {
         command: 'gh workspace-data',
         version: '0.1.0-compatible',
         inspectionProtocolVersions: [1],
-        publicationResultProtocolVersions: [1],
+        publicationResultProtocolVersions: [2],
+        publicationStatePersistence: 'cli',
         identityProtocolVersions: [1],
         loadBehavior: 'replace'
     })), {
         command: 'gh workspace-data',
         version: '0.1.0-compatible',
         inspectionProtocolVersions: [1],
-        publicationResultProtocolVersions: [1],
+        publicationResultProtocolVersions: [2],
+        publicationStatePersistence: 'cli',
         identityProtocolVersions: [1],
         loadBehavior: 'replace'
     });
@@ -39,11 +41,18 @@ test('rejects incompatible CLI capabilities', () => {
     })), /required capabilities/);
 });
 
-// Reject older CLIs that would reload or write state during publication.
-test('requires metadata-only publication capability', () => {
+// Reject older CLIs that delegate durable publication persistence to the editor.
+test('requires CLI-owned publication persistence', () => {
     assert.throws(() => parseCapabilities(JSON.stringify({
         command: 'gh workspace-data', version: '0.8.0', inspectionProtocolVersions: [1], loadBehavior: 'replace'
     })), /required capabilities/);
+});
+
+// A legacy editor-owned publication contract is rejected even if inspection remains compatible.
+test('rejects protocol-1 editor-persisted publication results', () => {
+    assert.throws(() => parseCapabilities(JSON.stringify({ command: 'gh workspace-data', version: '0.9.0',
+        inspectionProtocolVersions: [1], publicationResultProtocolVersions: [1], identityProtocolVersions: [1],
+        loadBehavior: 'replace' })), /required capabilities/);
 });
 
 // Accept a complete protocol-version-one report.

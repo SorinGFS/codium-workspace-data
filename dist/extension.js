@@ -1,5 +1,5 @@
 "use strict";
-// Present incremental native SCM and persist CLI-owned publication checkpoints without loading data.
+// Present incremental native SCM from CLI-persisted checkpoints without writing synchronization state.
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -258,7 +258,7 @@ class WorkspaceDataController {
         const relative = path.relative(folder.uri.fsPath, uri.fsPath).split(path.sep).join('/');
         return relative.startsWith('#/public/') || relative.startsWith('#/private/');
     }
-    // Publish disk snapshots without loading; persist every confirmed checkpoint before ending progress.
+    // Publish disk snapshots without loading; observe persisted checkpoints and reconcile before ending progress.
     async runPublication(mergeOwned) {
         const repository = await this.pickRepository();
         if (!repository || !await this.ensurePrerequisites(repository.folder)
@@ -272,7 +272,7 @@ class WorkspaceDataController {
         await this.operations.run(repository.folder, title, args, vscode.ProgressLocation.SourceControl, async (cli, token) => {
             await repository.suspendRefresh();
             try {
-                await cli.publish(mergeOwned, (event) => repository.acknowledge(event), token);
+                await cli.publish(mergeOwned, (event) => repository.observePublication(event), token);
             }
             finally {
                 await repository.resumeRefresh(false);

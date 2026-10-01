@@ -8,6 +8,7 @@ const Module = require('node:module');
 const test = require('node:test');
 let scenario;
 let spawns = 0;
+let publicationProtocol = 2;
 const originalLoad = Module._load;
 class CancellationError extends Error {}
 
@@ -17,7 +18,7 @@ Module._load = function load(request, parent, isMain) {
         return { CancellationError };
     }
     if (request === 'node:child_process') {
-        return { spawn: (_executable, _args, options) => {
+        return { spawn: (_executable, args, options) => {
             spawns += 1;
             assert.equal(options.shell, false);
             assert.equal(options.env.GH_PROMPT_DISABLED, '1');
@@ -25,7 +26,16 @@ Module._load = function load(request, parent, isMain) {
             child.stdout = new EventEmitter();
             child.stderr = new EventEmitter();
             child.kill = () => true;
-            queueMicrotask(() => scenario(child));
+            queueMicrotask(() => {
+                if (args[1] === 'capabilities') {
+                    child.stdout.emit('data', Buffer.from(JSON.stringify({ command: 'gh workspace-data', version: '0.10.0',
+                        inspectionProtocolVersions: [1], publicationResultProtocolVersions: [publicationProtocol], publicationStatePersistence: 'cli',
+                        identityProtocolVersions: [1], loadBehavior: 'replace' })));
+                    child.emit('close', 0);
+                } else {
+                    scenario(child);
+                }
+            });
             return child;
         } };
     }
@@ -40,8 +50,8 @@ try {
 const cli = new WorkspaceDataCli({ uri: { scheme: 'file', fsPath: '/fixture' } }, { append() {} });
 const digest = `sha256:${crypto.createHash('sha256').update('checkpoint').digest('hex')}`;
 const event = {
-    protocolVersion: 1, type: 'published', projectIdentity: 'github.com/acme/widget',
-    previousStateDigest: digest, visibility: 'public', repositoryState: {
+    protocolVersion: 2, type: 'published', projectIdentity: 'github.com/acme/widget',
+    previousStateDigest: digest, stateDigest: digest, visibility: 'public', repositoryState: {
         availability: 'available', repository: 'acme/public-data', baselineRepository: 'acme/public-data',
         defaultBranch: 'main', baseRevision: 'a'.repeat(40), baseline: [], complete: true,
         pullRequest: { number: 12, url: 'https://github.com/acme/public-data/pull/12',
@@ -49,8 +59,8 @@ const event = {
     }
 };
 
-// Earlier publication outcomes must be persisted before a deferred merge rejects the command.
-test('drains successful metadata writes on nonzero subprocess exit', async () => {
+// Persisted publication notifications must be drained before a deferred merge rejects the command.
+test('drains successful notifications on nonzero subprocess exit', async () => {
     let acknowledged = false;
     scenario = (child) => {
         child.stdout.emit('data', Buffer.from(`${JSON.stringify(event)}\n`));
@@ -64,8 +74,8 @@ test('drains successful metadata writes on nonzero subprocess exit', async () =>
     assert.equal(acknowledged, true);
 });
 
-// Metadata failures settle publication progress rather than leaving an unhandled promise pending.
-test('rejects publication when checkpoint persistence fails', async () => {
+// Notification failures settle publication progress rather than leaving an unhandled promise pending.
+test('rejects publication when notification observation fails', async () => {
     scenario = (child) => {
         child.stdout.emit('data', Buffer.from(`${JSON.stringify(event)}\n`));
         child.emit('close', 0);
@@ -78,6 +88,19 @@ test('does not spawn an already-cancelled operation', async () => {
     const before = spawns;
     await assert.rejects(cli.publish(false, async () => {}, { isCancellationRequested: true }), CancellationError);
     assert.equal(spawns, before);
+});
+
+// Recheck ownership compatibility immediately before publishing, even after activation cached a prerequisite check.
+test('rejects a downgraded CLI before spawning publication', async () => {
+    const before = spawns;
+    publicationProtocol = 1;
+    scenario = () => assert.fail('incompatible CLI must not publish');
+    try {
+        await assert.rejects(cli.publish(false, () => {}), /required capabilities/);
+        assert.equal(spawns, before + 1);
+    } finally {
+        publicationProtocol = 2;
+    }
 });
 
 // Clean no-op publication can close successfully without inventing a checkpoint.

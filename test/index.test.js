@@ -42,13 +42,21 @@ async function fixture(context, files = { 'a.txt': 'old\n' }) {
 
 // Reproduce authoritative publication metadata while preserving the original checkpoint fingerprint.
 function published(state, baseline) {
+    const repositoryState = { ...state.repositories.public, baseRevision: 'c'.repeat(40), baseline,
+        pullRequest: { number: 12, url: 'https://github.com/acme/public-data/pull/12',
+            headRepository: 'acme/public-data', headBranch: 'alice-contrib/widget', baseBranch: 'main', status: 'open' } };
     return {
-        protocolVersion: 1, type: 'published', projectIdentity: state.projectIdentity,
-        previousStateDigest: stateDigest(state), visibility: 'public',
-        repositoryState: { ...state.repositories.public, baseRevision: 'c'.repeat(40), baseline,
-            pullRequest: { number: 12, url: 'https://github.com/acme/public-data/pull/12',
-                headRepository: 'acme/public-data', headBranch: 'alice-contrib/widget', baseBranch: 'main', status: 'open' } }
+        protocolVersion: 2, type: 'published', projectIdentity: state.projectIdentity,
+        previousStateDigest: stateDigest(state), visibility: 'public', repositoryState,
+        stateDigest: stateDigest({ ...state, repositories: { ...state.repositories, public: repositoryState } })
     };
+}
+
+// Model the CLI's atomic metadata-only checkpoint rather than asking the editor to write it.
+async function persist(store, state, event) {
+    const next = { ...state, repositories: { ...state.repositories, [event.visibility]: event.repositoryState } };
+    await fs.writeFile(store.statePath, JSON.stringify(next));
+    return next;
 }
 
 // Repository size must not cause unchanged payloads to be reread after a single known-file save.
@@ -82,19 +90,22 @@ test('tracks added files and deleted/recreated subtrees', async (context) => {
     assert.equal((await index.refresh()).changes.length, 0);
 });
 
-// Acknowledging publication never writes a data file or rehashes unchanged payloads after a merge.
-test('persists published and merged metadata without loading or rereading files', async (context) => {
+// Observing CLI checkpoints never writes a data file or rehashes unchanged payloads after a merge.
+test('observes persisted publication and merge metadata without loading or rereading files', async (context) => {
     const { root, state, store, index } = await fixture(context);
     await index.refresh();
     const dataPath = path.join(root, '#/public/tests/a.txt');
     const before = await fs.stat(dataPath);
     const event = parsePublicationEvent(JSON.stringify(published(state, state.repositories.public.baseline)));
-    const next = await store.apply(event);
-    index.acceptState(next);
+    const next = await persist(store, state, event);
+    index.observePublication(event);
+    await index.refresh();
     const merged = { ...event, type: 'merged', previousStateDigest: stateDigest(next), repositoryState: {
         ...next.repositories.public, baseRevision: 'd'.repeat(40), mergedRevision: 'd'.repeat(40), pullRequest: null
     } };
-    index.acceptState(await store.apply(parsePublicationEvent(JSON.stringify(merged))));
+    const final = await persist(store, next, merged);
+    merged.stateDigest = stateDigest(final);
+    index.observePublication(parsePublicationEvent(JSON.stringify(merged)));
     index.invalidate('#/.data-state.json');
     assert.equal((await index.refresh()).changes.length, 0);
     assert.equal(index.hashedFiles, 1);
@@ -110,30 +121,36 @@ test('preserves edits made during publication instead of blindly clearing SCM', 
     const event = published(state, [entry('a.txt', 'published\n')]);
     await fs.writeFile(path.join(root, '#/public/tests/a.txt'), 'newer editor save\n');
     index.invalidate('#/public/tests/a.txt');
-    index.acceptState(await store.apply(parsePublicationEvent(JSON.stringify(event))));
+    await persist(store, state, event);
+    index.observePublication(parsePublicationEvent(JSON.stringify(event)));
     const report = await index.refresh();
     assert.equal(report.changes[0].status, 'modified');
     assert.equal(await fs.readFile(path.join(root, '#/public/tests/a.txt'), 'utf8'), 'newer editor save\n');
 });
 
-// External replacement invalidates the fingerprint before any write is permitted.
-test('rejects stale and replayed acknowledgements without overwriting state', async (context) => {
-    const { state, store } = await fixture(context);
+// Notifications cannot resurrect an old baseline or overwrite a later durable checkpoint.
+test('reads durable state instead of replayed pipe metadata', async (context) => {
+    const { state, store, index } = await fixture(context);
+    await index.refresh();
     const event = published(state, state.repositories.public.baseline);
-    await store.apply(event);
-    const current = await store.read();
-    await assert.rejects(store.apply(event), /state changed during publication/);
-    assert.equal(await store.read(), current);
-    assert.equal((await fs.readdir(store.namespaceRoot)).some((name) => name.endsWith('.tmp') || name.endsWith('.lock')), false);
+    const next = await persist(store, state, event);
+    next.repositories.public.baseRevision = 'd'.repeat(40);
+    await fs.writeFile(store.statePath, JSON.stringify(next));
+    const original = await store.read();
+    index.observePublication(event);
+    assert.equal((await index.refresh()).repositories.public.baselineRevision, 'd'.repeat(40));
+    assert.equal(await store.read(), original);
+    assert.equal(store.apply, undefined);
 });
 
-// Serialize with the CLI's explicit Load lock rather than racing a metadata replacement.
-test('refuses metadata writes while explicit Load holds the shared lock', async (context) => {
-    const { state, store } = await fixture(context);
+// Do not publish a scan while either entry point holds the whole-operation lock.
+test('defers reconciliation while the shared CLI operation lock exists', async (context) => {
+    const { store, index } = await fixture(context);
+    await index.refresh();
     await fs.writeFile(path.join(store.namespaceRoot, '.data-state.lock'), '');
-    const original = await store.read();
-    await assert.rejects(store.apply(published(state, state.repositories.public.baseline)), /locked/);
-    assert.equal(await store.read(), original);
+    await assert.rejects(index.refresh(true), /synchronization is running/);
+    await fs.rm(path.join(store.namespaceRoot, '.data-state.lock'));
+    assert.equal((await index.refresh(true)).changes.length, 0);
 });
 
 // A valid-looking checkpoint from another project cannot become this repository's inspection baseline.
@@ -191,4 +208,91 @@ test('stops acknowledgement delivery after a malformed or rejected result', asyn
     stream.push(Buffer.from(`{}\n${JSON.stringify(published(state, []))}\n`));
     await assert.rejects(stream.finish(), /Invalid/);
     assert.equal(writes, 0);
+});
+
+// Full reconciliation must reread metadata even when the state watcher misses the replacement.
+test("full refresh adopts an external baseline without a watcher event", async (context) => {
+    const { root, state, store, index } = await fixture(context);
+    await index.refresh();
+    await fs.writeFile(path.join(root, '#/public/tests/a.txt'), 'loaded\n');
+    await persist(store, state, published(state, [entry('a.txt', 'loaded\n')]));
+    const report = await index.refresh(true);
+    assert.equal(report.repositories.public.baselineRevision, "c".repeat(40));
+    assert.equal(report.changes.length, 0);
+});
+
+// A Load may replace data while leaving the baseline fingerprint unchanged; metadata replacement still invalidates hashes.
+test('external replacement with the same fingerprint still reconciles payloads', async (context) => {
+    const { root, state, store, index } = await fixture(context);
+    await index.refresh();
+    await fs.writeFile(path.join(root, '#/public/tests/a.txt'), 'edited\n');
+    index.invalidate('#/public/tests/a.txt');
+    assert.equal((await index.refresh()).changes.length, 1);
+    await fs.writeFile(path.join(root, '#/public/tests/a.txt'), 'old\n');
+    await fs.writeFile(store.statePath, JSON.stringify(state, null, 2));
+    assert.equal((await index.refresh()).changes.length, 0);
+});
+
+// Exercise both merge modes through alternating external and editor-observed persisted checkpoints.
+for (const mergeOwned of [false, true]) {
+    test(`terminal -> editor -> terminal handoff, mergeOwned=${mergeOwned}`, async (context) => {
+        const { root, state, store, index } = await fixture(context);
+        await index.refresh();
+        let current = state;
+        // Each interface captures content independently; only the CLI writes the durable baseline.
+        for (const [step, content] of ['terminal\n', 'editor\n', 'terminal again\n'].entries()) {
+            await fs.writeFile(path.join(root, "#/public/tests/a.txt"), content);
+            const event = published(current, [entry("a.txt", content)]);
+            if (mergeOwned) {
+                event.type = "merged";
+                event.repositoryState.pullRequest = null;
+                event.repositoryState.mergedRevision = "d".repeat(40);
+            }
+            current = await persist(store, current, event);
+            event.stateDigest = stateDigest(current);
+            if (step === 1) {
+                index.invalidate("#/public/tests/a.txt");
+                index.observePublication(event);
+            }
+            const report = await index.refresh();
+            assert.equal(report.changes.length, 0);
+            assert.equal(report.repositories.public.pullRequest === null, mergeOwned);
+        }
+    });
+}
+
+// A refresh straddling two authoritative epochs must be rejected instead of rendering a mixed baseline.
+test('rejects metadata replaced during a reconciliation and recovers', async (context) => {
+    const { state, store, index } = await fixture(context);
+    await index.refresh();
+    const signature = index.store.signature.bind(index.store);
+    let calls = 0;
+    // Inject an external checkpoint immediately before the final epoch check.
+    index.store.signature = async () => {
+        if (++calls === 2) {
+            await persist(store, state, published(state, state.repositories.public.baseline));
+        }
+        return signature();
+    };
+    await assert.rejects(index.refresh(true), /changed during reconciliation/);
+    const report = await index.refresh();
+    assert.equal(report.repositories.public.baselineRevision, 'c'.repeat(40));
+    assert.equal(report.changes.length, 0);
+});
+
+// Missing, legacy, and malformed state must not resurrect the old ready snapshot on later refreshes.
+test("clears cached initialization and recovers after state replacement", async (context) => {
+    const { state, store, index } = await fixture(context);
+    await index.refresh();
+    await fs.rm(store.statePath);
+    assert.equal((await index.refresh(true)).state, "notInitialized");
+    assert.equal((await index.refresh()).state, "notInitialized");
+    await fs.writeFile(store.statePath, JSON.stringify({ ...state, version: 1 }));
+    assert.equal((await index.refresh(true)).state, "reloadRequired");
+    assert.equal((await index.refresh()).state, "reloadRequired");
+    await fs.writeFile(store.statePath, "{}");
+    await assert.rejects(index.refresh(true), /version-two state/);
+    await assert.rejects(index.refresh(), /version-two state/);
+    await fs.writeFile(store.statePath, JSON.stringify(state));
+    assert.equal((await index.refresh()).changes.length, 0);
 });

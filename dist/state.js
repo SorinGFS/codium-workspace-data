@@ -1,5 +1,5 @@
 "use strict";
-// Validate CLI-owned checkpoints and atomically persist publication metadata without touching data files.
+// Validate CLI-owned metadata and expose read-only access to the durable synchronization checkpoint.
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -117,20 +117,15 @@ function parseWorkspaceState(raw) {
     validateRepository(value.repositories.private, value.projectIdentity);
     return value;
 }
-// Validate one authoritative JSON Lines acknowledgement before any persistent effect.
+// Validate one persisted JSON Lines notification before it influences derived caches.
 function parsePublicationEvent(raw) {
     const value = JSON.parse(raw);
-    if (!record(value) || value.protocolVersion !== 1 || !['published', 'merged'].includes(String(value.type))
+    if (!record(value) || value.protocolVersion !== 2 || !['published', 'merged'].includes(String(value.type))
         || typeof value.projectIdentity !== 'string' || safeSegments(value.projectIdentity).length < 3
         || !['public', 'private'].includes(String(value.visibility))
-        || !/^sha256:[a-f0-9]{64}$/.test(String(value.previousStateDigest))) {
+        || !/^sha256:[a-f0-9]{64}$/.test(String(value.previousStateDigest))
+        || !/^sha256:[a-f0-9]{64}$/.test(String(value.stateDigest))) {
         throw new Error('Invalid workspace-data publication result.');
-    }
-    validateRepository(value.repositoryState, value.projectIdentity);
-    if (value.repositoryState.availability !== 'available'
-        || (value.type === 'published' && !value.repositoryState.pullRequest)
-        || (value.type === 'merged' && (value.repositoryState.pullRequest || !value.repositoryState.mergedRevision))) {
-        throw new Error('Contradictory workspace-data publication result.');
     }
     return value;
 }
@@ -146,7 +141,7 @@ class WorkspaceStateStore {
         this.namespaceRoot = path.join(root, '#');
         this.statePath = path.join(this.namespaceRoot, '.data-state.json');
     }
-    // Refuse namespace redirects and state links before reading or replacing local metadata.
+    // Refuse namespace redirects and state links before reading local metadata.
     async read() {
         const namespace = await fs.lstat(this.namespaceRoot);
         if (!namespace.isDirectory() || namespace.isSymbolicLink()) {
@@ -158,52 +153,30 @@ class WorkspaceStateStore {
         }
         return fs.readFile(this.statePath, 'utf8');
     }
-    // Preserve other visibilities and reject checkpoints invalidated by an external Load or edit.
-    async apply(event) {
+    // Defer reads across synchronization while either interface owns the shared CLI operation lock.
+    async busy() {
+        try {
+            await fs.lstat(path.join(this.namespaceRoot, '.data-state.lock'));
+            return true;
+        }
+        catch (error) {
+            if (error.code === 'ENOENT') {
+                return false;
+            }
+            throw error;
+        }
+    }
+    // Detect external replacements cheaply between full, fingerprint-verified reconciliations.
+    async signature() {
         const namespace = await fs.lstat(this.namespaceRoot);
         if (!namespace.isDirectory() || namespace.isSymbolicLink()) {
             throw new Error('Workspace Data namespace must be an ordinary directory.');
         }
-        const lockPath = path.join(this.namespaceRoot, '.data-state.lock');
-        let lock;
-        try {
-            lock = await fs.open(lockPath, 'wx');
+        const state = await fs.lstat(this.statePath, { bigint: true });
+        if (!state.isFile() || state.isSymbolicLink()) {
+            throw new Error('Workspace Data state must be an ordinary file.');
         }
-        catch (error) {
-            if (error.code === 'EEXIST') {
-                throw new Error('Workspace Data state is locked; remote changes may already exist.');
-            }
-            throw error;
-        }
-        try {
-            return await this.commit(event);
-        }
-        finally {
-            await lock.close();
-            await fs.rm(lockPath);
-        }
-    }
-    // Compare-and-replace under the shared lock; explicit CLI Load cannot race this commit.
-    async commit(event) {
-        const original = await this.read();
-        const state = parseWorkspaceState(original);
-        if (state.projectIdentity !== event.projectIdentity || stateDigest(state) !== event.previousStateDigest
-            || state.repositories[event.visibility].repository !== event.repositoryState.repository) {
-            throw new Error('Workspace Data state changed during publication; metadata was not overwritten. Remote changes may already exist.');
-        }
-        state.repositories[event.visibility] = event.repositoryState;
-        const temporary = path.join(this.namespaceRoot, `.data-state-${crypto.randomUUID()}.tmp`);
-        try {
-            await fs.writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, { flag: 'wx' });
-            if (await this.read() !== original) {
-                throw new Error('Workspace Data state changed before metadata replacement; review the remote result.');
-            }
-            await fs.rename(temporary, this.statePath);
-            return state;
-        }
-        finally {
-            await fs.rm(temporary, { force: true });
-        }
+        return `${state.ino}:${state.size}:${state.mtimeNs}:${state.ctimeNs}`;
     }
 }
 exports.WorkspaceStateStore = WorkspaceStateStore;

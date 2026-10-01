@@ -50,6 +50,8 @@ class WorkspaceDataIndex {
     invalidated = new Set();
     needsFullScan = true;
     stateInvalidated = true;
+    stateSignature;
+    publishedStates = new Set();
     hashedFiles = 0;
     // Derive all local paths from the current workspace, never from remote metadata.
     constructor(root) {
@@ -62,7 +64,7 @@ class WorkspaceDataIndex {
     // Retain data events during operations while ignoring infrastructure and metadata-write staging.
     invalidate(workspacePath) {
         const relative = workspacePath.split(path.sep).join('/');
-        if (relative === '#/.data-state.json' || relative === '#') {
+        if (relative === '#/.data-state.json' || relative === '#/.data-state.lock' || relative === '#') {
             this.stateInvalidated = true;
             if (relative === '#') {
                 this.needsFullScan = true;
@@ -75,7 +77,15 @@ class WorkspaceDataIndex {
         }
         return false;
     }
-    // Advance acknowledged baselines from persisted CLI outcomes without rereading workspace payloads.
+    // Recognize this editor's persisted publication epochs without treating pipe metadata as authority.
+    observePublication(event) {
+        if (this.projectIdentity && event.projectIdentity !== this.projectIdentity) {
+            throw new Error('Publication notification belongs to another project.');
+        }
+        this.publishedStates.add(event.stateDigest);
+        this.stateInvalidated = true;
+    }
+    // Advance derived baselines from the durable checkpoint without rereading unchanged payloads.
     acceptState(state) {
         this.state = state;
         this.stateInvalidated = false;
@@ -94,7 +104,24 @@ class WorkspaceDataIndex {
     }
     // Reconcile startup/manual refreshes completely; ordinary events inspect only their affected subtrees.
     async refresh(full = false) {
-        if (this.stateInvalidated || !this.state) {
+        let signature;
+        try {
+            signature = await this.store.signature();
+            // Never inspect a replacement or publish a mixed snapshot while a CLI operation holds the lock.
+            if (await this.store.busy()) {
+                throw new Error('Workspace Data synchronization is running; retry after it completes.');
+            }
+        }
+        catch (error) {
+            if (error.code === 'ENOENT') {
+                this.clearState();
+                return this.emptyReport('notInitialized', this.projectIdentity || '');
+            }
+            // Invalid or busy metadata cannot leave an old cache eligible for later incremental use.
+            this.clearState();
+            throw error;
+        }
+        if (full || this.stateInvalidated || !this.state || signature !== this.stateSignature) {
             try {
                 const raw = await this.store.read();
                 const parsed = JSON.parse(raw);
@@ -103,19 +130,23 @@ class WorkspaceDataIndex {
                 }
                 const version = parsed.version;
                 if (version === 1) {
-                    this.files.clear();
-                    this.changes.clear();
-                    return this.emptyReport('reloadRequired', JSON.parse(raw).projectIdentity);
+                    this.clearState();
+                    return this.emptyReport('reloadRequired', parsed.projectIdentity);
                 }
                 const state = (0, state_1.parseWorkspaceState)(raw);
-                if (!this.state || (0, state_1.stateDigest)(this.state) !== (0, state_1.stateDigest)(state)) {
+                const fingerprint = (0, state_1.stateDigest)(state);
+                if ((!this.state || signature !== this.stateSignature || (0, state_1.stateDigest)(this.state) !== fingerprint)
+                    && !this.publishedStates.has(fingerprint)) {
                     this.needsFullScan = true;
                 }
                 this.acceptState(state);
+                this.stateSignature = signature;
+                this.publishedStates.clear();
             }
             catch (error) {
+                this.clearState();
                 if (error.code === 'ENOENT') {
-                    return this.emptyReport('notInitialized', this.state?.projectIdentity || '');
+                    return this.emptyReport('notInitialized', this.projectIdentity || '');
                 }
                 throw error;
             }
@@ -165,7 +196,25 @@ class WorkspaceDataIndex {
             this.needsFullScan = true;
             throw error;
         }
+        // Reject scans straddling an external state replacement or newly started operation.
+        if (await this.store.signature() !== signature
+            || await this.store.busy()) {
+            this.clearState();
+            throw new Error('Workspace Data changed during reconciliation; retry after synchronization completes.');
+        }
         return this.snapshot();
+    }
+    // Discard every derived baseline when durable initialization becomes unavailable or invalid.
+    clearState() {
+        this.state = undefined;
+        this.stateSignature = undefined;
+        this.stateInvalidated = true;
+        this.needsFullScan = true;
+        this.files.clear();
+        this.baselines.clear();
+        this.changes.clear();
+        this.invalidated.clear();
+        this.publishedStates.clear();
     }
     // Validate each existing ancestor so a watcher event cannot redirect reads through a directory link.
     async scan(key) {

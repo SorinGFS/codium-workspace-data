@@ -77,7 +77,8 @@ function parseCapabilities(raw) {
         || !value.inspectionProtocolVersions.every((version) => Number.isSafeInteger(version))
         || !value.inspectionProtocolVersions.includes(1)
         || !Array.isArray(value.publicationResultProtocolVersions)
-        || !value.publicationResultProtocolVersions.includes(1)
+        || !value.publicationResultProtocolVersions.includes(2)
+        || value.publicationStatePersistence !== 'cli'
         || !Array.isArray(value.identityProtocolVersions) || !value.identityProtocolVersions.includes(1)
         || value.loadBehavior !== 'replace') {
         throw new Error('The installed gh-workspace-data extension does not report the required capabilities.');
@@ -87,6 +88,7 @@ function parseCapabilities(raw) {
         version: value.version,
         inspectionProtocolVersions: value.inspectionProtocolVersions,
         publicationResultProtocolVersions: value.publicationResultProtocolVersions,
+        publicationStatePersistence: 'cli',
         identityProtocolVersions: value.identityProtocolVersions,
         loadBehavior: 'replace'
     };

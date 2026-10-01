@@ -141,11 +141,9 @@ class WorkspaceDataRepository {
         this.suspended = false;
         await this.refresh(full);
     }
-    // Persist CLI-owned metadata and immediately update native SCM from cached content digests.
-    async acknowledge(event) {
-        const state = await this.index.store.apply(event);
-        this.index.acceptState(state);
-        this.render(this.index.snapshot());
+    // Record persisted publication epochs; reconciliation reads authoritative metadata from disk.
+    observePublication(event) {
+        this.index.observePublication(event);
     }
     // Replace resource/decorations snapshots; native SCM computes the renderer-side resource splices.
     render(report) {

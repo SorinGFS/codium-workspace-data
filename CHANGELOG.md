@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0
+
+- Make the CLI the sole writer of synchronization checkpoints; Codium only reads durable state and presents derived SCM.
+- Support alternating terminal and editor publication, including owned merges, without an intervening Load.
+- Detect external checkpoint changes through metadata signatures and fingerprint-verified full refreshes, including missed watcher events.
+- Discard obsolete caches after missing, legacy, or invalid state, and reject reconciliation overlapping CLI synchronization.
+- Retain incremental hashing for editor publication, post-capture edits, and partial successes.
+- Require gh-workspace-data 0.10.0 with publication-result protocol 2 and CLI-owned persistence; upgrade both components and reload the editor window.
+
 ## 0.1.6
 
 - Publish and Merge Owned never reload or replace workspace data; persist verified CLI checkpoints atomically, including partial successes.

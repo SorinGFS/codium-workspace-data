@@ -131,11 +131,9 @@ export class WorkspaceDataRepository implements vscode.Disposable, vscode.QuickD
         await this.refresh(full);
     }
 
-    // Persist CLI-owned metadata and immediately update native SCM from cached content digests.
-    public async acknowledge(event: PublicationEvent): Promise<void> {
-        const state = await this.index.store.apply(event);
-        this.index.acceptState(state);
-        this.render(this.index.snapshot());
+    // Record persisted publication epochs; reconciliation reads authoritative metadata from disk.
+    public observePublication(event: PublicationEvent): void {
+        this.index.observePublication(event);
     }
 
     // Replace resource/decorations snapshots; native SCM computes the renderer-side resource splices.
