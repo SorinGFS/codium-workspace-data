@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- Propagate modified and newly added Explorer decorations to ancestor folders.
+
 ## 0.2.0
 
 - Make the CLI the sole writer of synchronization checkpoints; Codium only reads durable state and presents derived SCM.

@@ -72,6 +72,7 @@ test('decorates modified files', () => {
 
     assert.equal(decoration.badge, 'M');
     assert.equal(decoration.color.id, 'gitDecoration.modifiedResourceForeground');
+    assert.equal(decoration.propagate, true);
 });
 
 // Mark newly added workspace data as untracked without decorating absent deletions.
@@ -82,5 +83,6 @@ test('decorates added but not deleted files', () => {
     assert.equal(added.repository.provideFileDecoration(added.uri).badge, 'U');
     assert.equal(added.repository.provideFileDecoration(added.uri).color.id,
         'gitDecoration.untrackedResourceForeground');
+    assert.equal(added.repository.provideFileDecoration(added.uri).propagate, true);
     assert.equal(deleted.repository.provideFileDecoration(deleted.uri), undefined);
 });

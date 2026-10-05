@@ -176,10 +176,14 @@ class WorkspaceDataRepository {
     provideFileDecoration(uri) {
         const change = this.changeForUri(uri);
         if (change?.status === 'modified') {
-            return new vscode.FileDecoration('M', 'Modified workspace data', new vscode.ThemeColor('gitDecoration.modifiedResourceForeground'));
+            const decoration = new vscode.FileDecoration('M', 'Modified workspace data', new vscode.ThemeColor('gitDecoration.modifiedResourceForeground'));
+            decoration.propagate = true;
+            return decoration;
         }
         if (change?.status === 'added') {
-            return new vscode.FileDecoration('U', 'Untracked workspace data', new vscode.ThemeColor('gitDecoration.untrackedResourceForeground'));
+            const decoration = new vscode.FileDecoration('U', 'Untracked workspace data', new vscode.ThemeColor('gitDecoration.untrackedResourceForeground'));
+            decoration.propagate = true;
+            return decoration;
         }
         return undefined;
     }
